@@ -1,19 +1,121 @@
 package mr
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
+	"path/filepath"
+	"sync"
+)
+
+type TaskState uint8
+
+const (
+	Idle = iota
+	InProgress
+	Completed
 )
 
 type Master struct {
 	// Your definitions here.
+	mapTasks []*Task
+	nMap     int
+	mapMutex sync.Mutex
 
+	reduceTasks []*Task
+	nReduce     int
+	reduceMutex sync.Mutex
+}
+
+type Task struct {
+	ID        int
+	Filenames []string
+	State     TaskState
 }
 
 // Your code here -- RPC handlers for the worker to call.
+func (m *Master) ReportMapResult(args *MapTaskReport, reply *MapTaskReportResponse) error {
+	for _, info := range args.ReduceInfos {
+		t := m.reduceTasks[info.ReduceTaskID]
+		t.State = Idle
+		t.Filenames = append(t.Filenames, info.InterFileLocation)
+	}
+
+	m.mapTasks[args.ID].State = Completed
+	return nil
+}
+
+func (m *Master) ReportReduceResult(args *ReduceTaskReport, reply *ReduceTaskReportResponse) error {
+	m.reduceTasks[args.ReduceTaskID].State = Completed
+	return nil
+}
+
+func (m *Master) TaskDistribute(args *TaskRequest, reply *TaskResponse) error {
+	if !m.completedMap() { // map phase
+		return m.distributeMapTask(reply)
+	}
+	if !m.completedReduce() { // reduce phase
+		return m.distributeReduceTask(reply)
+	}
+	// no task
+	reply.NoMoreTask = true
+	return nil
+}
+
+func (m *Master) distributeMapTask(reply *TaskResponse) error {
+	task, err := selectTask(m.mapTasks, Idle)
+	if err != nil {
+		return fmt.Errorf("distributeMapTask: %w", err)
+	}
+
+	reply.Task = MapTask
+	reply.NumReduce = m.nReduce
+	reply.Filenames = task.Filenames
+	reply.ID = task.ID
+
+	m.mapMutex.Lock()
+	task.State = InProgress
+	task.Filenames = []string{}
+	m.mapMutex.Unlock()
+	log.Printf("distributeMapTask %d", reply.ID)
+	return nil
+}
+
+func (m *Master) distributeReduceTask(reply *TaskResponse) error {
+	task, err := selectTask(m.reduceTasks, Idle)
+	if err != nil {
+		return fmt.Errorf("distributeReduceTask: %w", err)
+	}
+
+	reply.Task = ReduceTask
+	reply.Filenames = task.Filenames
+	reply.ID = task.ID
+
+	m.reduceMutex.Lock()
+	task.State = InProgress
+	task.Filenames = []string{}
+	m.reduceMutex.Unlock()
+
+	log.Printf("distributeReduceTask %d", reply.ID)
+	return nil
+}
+
+func selectTask(tlist []*Task, state TaskState) (*Task, error) {
+	idx := -1
+	for i, item := range tlist {
+		if item.State == Idle {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return nil, fmt.Errorf("no idle task")
+	}
+	return tlist[idx], nil
+}
 
 //
 // an example RPC handler.
@@ -46,11 +148,25 @@ func (m *Master) server() {
 // if the entire job has finished.
 //
 func (m *Master) Done() bool {
-	ret := false
+	return m.completedMap() && m.completedReduce()
+}
 
-	// Your code here.
+func (m *Master) completedMap() bool {
+	for _, t := range m.mapTasks {
+		if t.State != Completed {
+			return false
+		}
+	}
+	return true
+}
 
-	return ret
+func (m *Master) completedReduce() bool {
+	for _, t := range m.reduceTasks {
+		if t.State != Completed {
+			return false
+		}
+	}
+	return true
 }
 
 //
@@ -59,9 +175,38 @@ func (m *Master) Done() bool {
 // nReduce is the number of reduce tasks to use.
 //
 func MakeMaster(files []string, nReduce int) *Master {
-	m := Master{}
+	m := Master{
+		nReduce: nReduce,
+	}
 
-	// Your code here.
+	reduceTasks := make([]*Task, nReduce)
+	for i := 0; i < nReduce; i++ {
+		reduceTasks[i] = &Task{
+			ID:        i,
+			Filenames: make([]string, 0),
+			State:     Idle,
+		}
+	}
+	m.reduceTasks = reduceTasks
+
+	mapTasks := make([]*Task, 0)
+	idx := 0
+	for _, item := range files {
+		ms, err := filepath.Glob(item)
+		if err != nil {
+			panic(err)
+		}
+		for _, fn := range ms {
+			mapTasks = append(mapTasks, &Task{
+				ID:        idx,
+				Filenames: []string{fn},
+				State:     Idle,
+			})
+			idx++
+		}
+	}
+	m.nMap = len(m.mapTasks)
+	m.mapTasks = mapTasks
 
 	m.server()
 	return &m

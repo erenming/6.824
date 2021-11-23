@@ -1,6 +1,8 @@
 package mr
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"io/ioutil"
@@ -8,7 +10,7 @@ import (
 	"net/rpc"
 	"os"
 	"sort"
-	"sync"
+	"time"
 )
 
 //
@@ -33,89 +35,134 @@ func ihash(key string) int {
 // main/mrworker.go calls this function.
 //
 func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
-	ch := make(chan TaskResponse)
-	go func() {
-		for {
-			resp :=  AskForTask(TaskRequest{})
-			if resp.NoMoreTask {
-				break
-			}
-			ch <- resp
+	for {
+		task := AskForTask(TaskRequest{})
+		if task.NoMoreTask {
+			log.Printf("break")
+			break
 		}
-	}()
-
-	for task := range ch {
 		switch task.Task {
 		case MapTask:
-			maptask(task, mapf)
+			if err := maptask(task, mapf); err != nil {
+				panic(err)
+			}
 		case ReduceTask:
-			reducetask(task, reducef)
+			if err := reducetask(task, reducef); err != nil {
+				panic(err)
+			}
+			call("Master.ReportReduceResult", &ReduceTaskReport{ReduceTaskID: task.ID}, &ReduceTaskReportResponse{})
 		}
+		time.Sleep(time.Second)
 	}
 
 	// uncomment to send the Example RPC to the master.
 	// CallExample()
 }
 
-
-
-func maptask(task TaskResponse, mapf func(string, string) []KeyValue) {
+func maptask(task TaskResponse, mapf func(string, string) []KeyValue) error {
 	intermediate := make([]KeyValue, 0)
 	for _, filename := range task.Filenames {
 		file, err := os.Open(filename)
 		if err != nil {
-			log.Fatalf("cannot open %v", filename)
+			return fmt.Errorf("cannot open %v", filename)
 		}
 		content, err := ioutil.ReadAll(file)
 		if err != nil {
-			log.Fatalf("cannot read %v", filename)
+			return fmt.Errorf("cannot read %v", filename)
 		}
 		_ = file.Close()
 		kva := mapf(filename, string(content))
 		intermediate = append(intermediate, kva...)
 	}
-	sort.Slice(intermediate, func(i, j int) bool {
-		return intermediate[i].Key < intermediate[j].Key
-	})
+	// sort.Slice(intermediate, func(i, j int) bool {
+	// 	return intermediate[i].Key < intermediate[j].Key
+	// })
 
-	sort.Slice(intermediate, func(i, j int) bool {
-		return intermediate[i].Key < intermediate[j].Key
-	})
-
-	oname := fmt.Sprintf("mr-out-%d", resp.ID)
-	// ofile,  := os.Create(oname)
-	tmpfile, err := ioutil.TempFile("/tmp", "*")
-	if err != nil {
-		log.Fatal(err)
+	mr := &MapTaskReport{
+		ID:          task.ID,
+		ReduceInfos: make([]*ReduceInfo, 0),
 	}
-	ofile, _ := os.Create(oname)
 
+	reduceMap := make(map[int][]KeyValue)
+
+	for i := 0; i < len(intermediate); i++ {
+		reduceID := ihash(intermediate[i].Key) % task.NumReduce // partition
+		if _, ok := reduceMap[reduceID]; !ok {
+			reduceMap[reduceID] = make([]KeyValue, 0)
+		}
+		reduceMap[reduceID] = append(reduceMap[reduceID], intermediate[i])
+	}
+
+	for rid, list := range reduceMap {
+		tmp, _ := ioutil.TempFile("", "*")
+		enc := json.NewEncoder(tmp)
+		for _, item := range list {
+			err := enc.Encode(&item)
+			if err != nil {
+				return err
+			}
+		}
+		filename := fmt.Sprintf("mr-%d-%d", task.ID, rid)
+		if err := os.Rename(tmp.Name(), filename); err != nil {
+			return err
+		}
+
+		mr.ReduceInfos = append(mr.ReduceInfos, &ReduceInfo{
+			InterFileLocation: filename,
+			ReduceTaskID:      rid,
+		})
+	}
+
+	call("Master.ReportMapResult", mr, &MapTaskReportResponse{})
+	return nil
 }
 
-func reducetask(task TaskResponse, reducef func(string, []string) string) {
-	//
-	// call Reduce on each distinct key in intermediate[],
-	// and print the result to mr-out-0.
-	//
-	i := 0
-	for i < len(intermediate) {
-		j := i + 1
-		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
-			j++
-		}
-		values := []string{}
-		for k := i; k < j; k++ {
-			values = append(values, intermediate[k].Value)
-		}
-		output := reducef(intermediate[i].Key, values)
-
-		// this is the correct format for each line of Reduce output.
-		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
-
-		i = j
+//
+func reducetask(task TaskResponse, reducef func(string, []string) string) error {
+	filename := fmt.Sprintf("mr-out-%d", task.ID)
+	ofile, err := os.Create(filename)
+	if err != nil {
+		return err
 	}
 
-	ofile.Close()
+	kva := make([]KeyValue, 0, 10)
+	for _, filename := range task.Filenames {
+		buf, err := ioutil.ReadFile(filename)
+		if err != nil {
+			return err
+		}
+		dec := json.NewDecoder(bytes.NewBuffer(buf))
+		for {
+			kv := KeyValue{}
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			kva = append(kva, kv)
+		}
+	}
+	sort.Slice(kva, func(i, j int) bool {
+		return kva[i].Key < kva[j].Key
+	})
+
+	i := 0
+	for i < len(kva) {
+		j := i + 1
+		for j < len(kva) && kva[j].Key == kva[i].Key {
+			j++
+		}
+
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, kva[k].Value)
+		}
+		output := reducef(kva[i].Key, values)
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(ofile, "%v %v\n", kva[i].Key, output)
+
+		i = j
+
+	}
+	return ofile.Close()
 }
 
 func AskForTask(req TaskRequest) TaskResponse {

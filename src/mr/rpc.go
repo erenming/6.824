@@ -36,10 +36,32 @@ type TaskRequest struct {
 }
 
 type TaskResponse struct {
-	Task       TaskType
-	ID         uint
-	Filenames  []string
+	Task      TaskType
+	ID        int
+	Filenames []string
+
+	NumReduce  int
 	NoMoreTask bool
+}
+
+type MapTaskReport struct {
+	ID          int
+	ReduceInfos []*ReduceInfo
+}
+
+type ReduceInfo struct {
+	InterFileLocation string
+	ReduceTaskID      int
+}
+
+type MapTaskReportResponse struct {
+}
+
+type ReduceTaskReport struct {
+	ReduceTaskID int
+}
+
+type ReduceTaskReportResponse struct {
 }
 
 // Cook up a unique-ish UNIX-domain socket name
