@@ -19,11 +19,11 @@ const (
 	Completed
 )
 
+// Your definitions here.
 type Master struct {
-	// Your definitions here.
-	mapTasks []*Task
-	nMap     int
-	mapMutex sync.Mutex
+	mapTasks      []*Task
+	nCompletedMap int
+	mapMutex      sync.Mutex
 
 	reduceTasks []*Task
 	nReduce     int
@@ -38,13 +38,18 @@ type Task struct {
 
 // Your code here -- RPC handlers for the worker to call.
 func (m *Master) ReportMapResult(args *MapTaskReport, reply *MapTaskReportResponse) error {
+	m.reduceMutex.Lock()
 	for _, info := range args.ReduceInfos {
 		t := m.reduceTasks[info.ReduceTaskID]
 		t.State = Idle
 		t.Filenames = append(t.Filenames, info.InterFileLocation)
 	}
+	m.reduceMutex.Unlock()
 
+	m.mapMutex.Lock()
 	m.mapTasks[args.ID].State = Completed
+	m.nCompletedMap++
+	m.mapMutex.Unlock()
 	return nil
 }
 
@@ -66,7 +71,9 @@ func (m *Master) TaskDistribute(args *TaskRequest, reply *TaskResponse) error {
 }
 
 func (m *Master) distributeMapTask(reply *TaskResponse) error {
+	m.mapMutex.Lock()
 	task, err := selectTask(m.mapTasks, Idle)
+	m.mapMutex.Unlock()
 	if err != nil {
 		return fmt.Errorf("distributeMapTask: %w", err)
 	}
@@ -85,7 +92,9 @@ func (m *Master) distributeMapTask(reply *TaskResponse) error {
 }
 
 func (m *Master) distributeReduceTask(reply *TaskResponse) error {
+	m.reduceMutex.Lock()
 	task, err := selectTask(m.reduceTasks, Idle)
+	m.reduceMutex.Unlock()
 	if err != nil {
 		return fmt.Errorf("distributeReduceTask: %w", err)
 	}
@@ -152,12 +161,13 @@ func (m *Master) Done() bool {
 }
 
 func (m *Master) completedMap() bool {
-	for _, t := range m.mapTasks {
-		if t.State != Completed {
-			return false
-		}
-	}
-	return true
+	return m.nCompletedMap == len(m.mapTasks)
+	// for _, t := range m.mapTasks {
+	// 	if t.State != Completed {
+	// 		return false
+	// 	}
+	// }
+	// return true
 }
 
 func (m *Master) completedReduce() bool {
@@ -205,7 +215,6 @@ func MakeMaster(files []string, nReduce int) *Master {
 			idx++
 		}
 	}
-	m.nMap = len(m.mapTasks)
 	m.mapTasks = mapTasks
 
 	m.server()

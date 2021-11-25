@@ -52,7 +52,7 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 			}
 			call("Master.ReportReduceResult", &ReduceTaskReport{ReduceTaskID: task.ID}, &ReduceTaskReportResponse{})
 		}
-		time.Sleep(time.Second)
+		time.Sleep(3*time.Second)
 	}
 
 	// uncomment to send the Example RPC to the master.
