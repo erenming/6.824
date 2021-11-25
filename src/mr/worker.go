@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/rpc"
@@ -52,11 +53,8 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 			}
 			call("Master.ReportReduceResult", &ReduceTaskReport{ReduceTaskID: task.ID}, &ReduceTaskReportResponse{})
 		}
-		time.Sleep(3*time.Second)
+		time.Sleep(3 * time.Second)
 	}
-
-	// uncomment to send the Example RPC to the master.
-	// CallExample()
 }
 
 func maptask(task TaskResponse, mapf func(string, string) []KeyValue) error {
@@ -74,9 +72,6 @@ func maptask(task TaskResponse, mapf func(string, string) []KeyValue) error {
 		kva := mapf(filename, string(content))
 		intermediate = append(intermediate, kva...)
 	}
-	// sort.Slice(intermediate, func(i, j int) bool {
-	// 	return intermediate[i].Key < intermediate[j].Key
-	// })
 
 	mr := &MapTaskReport{
 		ID:          task.ID,
@@ -120,6 +115,11 @@ func maptask(task TaskResponse, mapf func(string, string) []KeyValue) error {
 //
 func reducetask(task TaskResponse, reducef func(string, []string) string) error {
 	filename := fmt.Sprintf("mr-out-%d", task.ID)
+
+	if _, err := os.Stat(filename); err == nil {
+		log.Printf("file %s already existed", filename)
+	}
+
 	ofile, err := os.Create(filename)
 	if err != nil {
 		return err
@@ -135,6 +135,9 @@ func reducetask(task TaskResponse, reducef func(string, []string) string) error 
 		for {
 			kv := KeyValue{}
 			if err := dec.Decode(&kv); err != nil {
+				if err != io.EOF {
+					log.Printf("decode %s", err)
+				}
 				break
 			}
 			kva = append(kva, kv)

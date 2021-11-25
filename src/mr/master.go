@@ -1,14 +1,15 @@
 package mr
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
+	"time"
 )
 
 type TaskState uint8
@@ -21,13 +22,15 @@ const (
 
 // Your definitions here.
 type Master struct {
-	mapTasks      []*Task
-	nCompletedMap int
-	mapMutex      sync.Mutex
+	mapTasks []*Task
+	mapMutex sync.Mutex
 
 	reduceTasks []*Task
-	nReduce     int
 	reduceMutex sync.Mutex
+	reduceChan  chan *Task
+
+	done    chan struct{}
+	nReduce int
 }
 
 type Task struct {
@@ -40,6 +43,9 @@ type Task struct {
 func (m *Master) ReportMapResult(args *MapTaskReport, reply *MapTaskReportResponse) error {
 	m.reduceMutex.Lock()
 	for _, info := range args.ReduceInfos {
+		if info.ReduceTaskID == 0 {
+			log.Printf("map task id: %d, file: %s", args.ID, info.InterFileLocation)
+		}
 		t := m.reduceTasks[info.ReduceTaskID]
 		t.State = Idle
 		t.Filenames = append(t.Filenames, info.InterFileLocation)
@@ -48,82 +54,106 @@ func (m *Master) ReportMapResult(args *MapTaskReport, reply *MapTaskReportRespon
 
 	m.mapMutex.Lock()
 	m.mapTasks[args.ID].State = Completed
-	m.nCompletedMap++
 	m.mapMutex.Unlock()
+
 	return nil
 }
 
 func (m *Master) ReportReduceResult(args *ReduceTaskReport, reply *ReduceTaskReportResponse) error {
-	m.reduceTasks[args.ReduceTaskID].State = Completed
+	m.reduceMutex.Lock()
+	task := m.reduceTasks[args.ReduceTaskID]
+	if len(task.Filenames) == 0 {
+		task.State = Completed
+	} else {
+		log.Printf("counldn't complete task %d filenames: %+v", task.ID, task.Filenames)
+	}
+	m.reduceMutex.Unlock()
 	return nil
 }
 
 func (m *Master) TaskDistribute(args *TaskRequest, reply *TaskResponse) error {
-	if !m.completedMap() { // map phase
-		return m.distributeMapTask(reply)
+	if !m.completedMap() {
+		for {
+			t, ok := m.selectIdleMapTask()
+			if !ok {
+				time.Sleep(time.Second)
+				continue
+			}
+			return m.distributeMapTask(reply, t)
+		}
 	}
-	if !m.completedReduce() { // reduce phase
-		return m.distributeReduceTask(reply)
+
+	if !m.completedReduce() {
+		if t, ok := m.selectIdleReduceTask(); ok {
+			return m.distributeReduceTask(reply, t)
+		}
 	}
-	// no task
+
 	reply.NoMoreTask = true
 	return nil
 }
 
-func (m *Master) distributeMapTask(reply *TaskResponse) error {
+func (m *Master) distributeMapTask(reply *TaskResponse, task *Task) error {
 	m.mapMutex.Lock()
-	task, err := selectTask(m.mapTasks, Idle)
-	m.mapMutex.Unlock()
-	if err != nil {
-		return fmt.Errorf("distributeMapTask: %w", err)
-	}
+	defer m.mapMutex.Unlock()
 
 	reply.Task = MapTask
 	reply.NumReduce = m.nReduce
 	reply.Filenames = task.Filenames
 	reply.ID = task.ID
 
-	m.mapMutex.Lock()
 	task.State = InProgress
 	task.Filenames = []string{}
-	m.mapMutex.Unlock()
 	log.Printf("distributeMapTask %d", reply.ID)
 	return nil
 }
 
-func (m *Master) distributeReduceTask(reply *TaskResponse) error {
+func (m *Master) distributeReduceTask(reply *TaskResponse, task *Task) error {
 	m.reduceMutex.Lock()
-	task, err := selectTask(m.reduceTasks, Idle)
-	m.reduceMutex.Unlock()
-	if err != nil {
-		return fmt.Errorf("distributeReduceTask: %w", err)
-	}
+	defer m.reduceMutex.Unlock()
 
 	reply.Task = ReduceTask
 	reply.Filenames = task.Filenames
 	reply.ID = task.ID
 
-	m.reduceMutex.Lock()
 	task.State = InProgress
 	task.Filenames = []string{}
-	m.reduceMutex.Unlock()
 
-	log.Printf("distributeReduceTask %d", reply.ID)
+	sort.Strings(reply.Filenames)
+	log.Printf("distributeReduceTask %d, filenames: %+v", reply.ID, reply.Filenames)
 	return nil
 }
 
-func selectTask(tlist []*Task, state TaskState) (*Task, error) {
+func (m *Master) selectIdleMapTask() (*Task, bool) {
+	m.mapMutex.Lock()
+	defer m.mapMutex.Unlock()
 	idx := -1
-	for i, item := range tlist {
+	for i, item := range m.mapTasks {
 		if item.State == Idle {
 			idx = i
 			break
 		}
 	}
 	if idx == -1 {
-		return nil, fmt.Errorf("no idle task")
+		return nil, false
 	}
-	return tlist[idx], nil
+	return m.mapTasks[idx], true
+}
+
+func (m *Master) selectIdleReduceTask() (*Task, bool) {
+	m.reduceMutex.Lock()
+	defer m.reduceMutex.Unlock()
+	idx := -1
+	for i, item := range m.reduceTasks {
+		if item.State == Idle {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return nil, false
+	}
+	return m.reduceTasks[idx], true
 }
 
 //
@@ -161,16 +191,19 @@ func (m *Master) Done() bool {
 }
 
 func (m *Master) completedMap() bool {
-	return m.nCompletedMap == len(m.mapTasks)
-	// for _, t := range m.mapTasks {
-	// 	if t.State != Completed {
-	// 		return false
-	// 	}
-	// }
-	// return true
+	m.mapMutex.Lock()
+	defer m.mapMutex.Unlock()
+	for _, t := range m.mapTasks {
+		if t.State != Completed {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Master) completedReduce() bool {
+	m.reduceMutex.Lock()
+	defer m.reduceMutex.Unlock()
 	for _, t := range m.reduceTasks {
 		if t.State != Completed {
 			return false
