@@ -72,21 +72,22 @@ func (m *Master) ReportReduceResult(args *ReduceTaskReport, reply *ReduceTaskRep
 }
 
 func (m *Master) TaskDistribute(args *TaskRequest, reply *TaskResponse) error {
-	if !m.completedMap() {
-		for {
-			t, ok := m.selectIdleMapTask()
-			if !ok {
-				time.Sleep(time.Second)
-				continue
-			}
-			return m.distributeMapTask(reply, t)
+	for !m.completedMap() {
+		t, ok := m.selectIdleMapTask()
+		if !ok {
+			time.Sleep(time.Second)
+			continue
 		}
+		return m.distributeMapTask(reply, t)
 	}
 
-	if !m.completedReduce() {
-		if t, ok := m.selectIdleReduceTask(); ok {
-			return m.distributeReduceTask(reply, t)
+	for !m.completedReduce() {
+		t, ok := m.selectIdleReduceTask()
+		if !ok {
+			time.Sleep(time.Second)
+			continue
 		}
+		return m.distributeReduceTask(reply, t)
 	}
 
 	reply.NoMoreTask = true
