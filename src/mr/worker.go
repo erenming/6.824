@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/rpc"
 	"os"
 	"sort"
@@ -36,37 +37,45 @@ func ihash(key string) int {
 // main/mrworker.go calls this function.
 //
 func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
+	id := RandStringRunes(20)
+	call("Master.WorkerRegister", &WorkerRegisterReq{WorkerID: id}, &WorkerRegisterResp{})
+
 	for {
-		task := AskForTask(TaskRequest{})
+		task := AskForTask(TaskRequest{WorkerID: id})
 		if task.NoMoreTask {
 			log.Printf("break")
 			break
 		}
 		switch task.Task {
 		case MapTask:
-			if err := maptask(task, mapf); err != nil {
+			if mr, err := maptask(task, mapf); err != nil {
 				panic(err)
+			} else {
+				mr.WorkerID = id
+				call("Master.ReportMapResult", mr, &MapTaskReportResponse{})
 			}
 		case ReduceTask:
 			if err := reducetask(task, reducef); err != nil {
 				panic(err)
 			}
-			call("Master.ReportReduceResult", &ReduceTaskReport{ReduceTaskID: task.ID}, &ReduceTaskReportResponse{})
+			call("Master.ReportReduceResult", &ReduceTaskReport{ReduceTaskID: task.ID, WorkerID: id}, &ReduceTaskReportResponse{})
 		}
 		time.Sleep(3 * time.Second)
 	}
+
+	call("Master.WorkerLogout", &WorkerLogoutReq{WorkerID: id}, &WorkerLogOutResp{})
 }
 
-func maptask(task TaskResponse, mapf func(string, string) []KeyValue) error {
+func maptask(task TaskResponse, mapf func(string, string) []KeyValue) (*MapTaskReport, error) {
 	intermediate := make([]KeyValue, 0)
 	for _, filename := range task.Filenames {
 		file, err := os.Open(filename)
 		if err != nil {
-			return fmt.Errorf("cannot open %v", filename)
+			return nil, fmt.Errorf("cannot open %v", filename)
 		}
 		content, err := ioutil.ReadAll(file)
 		if err != nil {
-			return fmt.Errorf("cannot read %v", filename)
+			return nil, fmt.Errorf("cannot read %v", filename)
 		}
 		_ = file.Close()
 		kva := mapf(filename, string(content))
@@ -74,7 +83,7 @@ func maptask(task TaskResponse, mapf func(string, string) []KeyValue) error {
 	}
 
 	mr := &MapTaskReport{
-		ID:          task.ID,
+		MapTaskID:   task.ID,
 		ReduceInfos: make([]*ReduceInfo, 0),
 	}
 
@@ -94,12 +103,12 @@ func maptask(task TaskResponse, mapf func(string, string) []KeyValue) error {
 		for _, item := range list {
 			err := enc.Encode(&item)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
 		filename := fmt.Sprintf("mr-%d-%d", task.ID, rid)
 		if err := os.Rename(tmp.Name(), filename); err != nil {
-			return err
+			return nil, err
 		}
 
 		mr.ReduceInfos = append(mr.ReduceInfos, &ReduceInfo{
@@ -108,8 +117,7 @@ func maptask(task TaskResponse, mapf func(string, string) []KeyValue) error {
 		})
 	}
 
-	call("Master.ReportMapResult", mr, &MapTaskReportResponse{})
-	return nil
+	return mr, nil
 }
 
 //
@@ -218,4 +226,18 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 
 	fmt.Println(err)
 	return false
+}
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
+var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+func RandStringRunes(n int) string {
+	b := make([]rune, n)
+	for i := range b {
+		b[i] = letterRunes[rand.Intn(len(letterRunes))]
+	}
+	return string(b)
 }

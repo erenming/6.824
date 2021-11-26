@@ -32,7 +32,22 @@ type ExampleReply struct {
 }
 
 // Add your RPC definitions here.
+type WorkerRegisterReq struct {
+	WorkerID string
+}
+
+type WorkerRegisterResp struct {
+}
+
+type WorkerLogoutReq struct {
+	WorkerID string
+}
+
+type WorkerLogOutResp struct {
+}
+
 type TaskRequest struct {
+	WorkerID string
 }
 
 type TaskResponse struct {
@@ -45,7 +60,8 @@ type TaskResponse struct {
 }
 
 type MapTaskReport struct {
-	ID          int
+	WorkerID    string
+	MapTaskID   int
 	ReduceInfos []*ReduceInfo
 }
 
@@ -58,6 +74,7 @@ type MapTaskReportResponse struct {
 }
 
 type ReduceTaskReport struct {
+	WorkerID     string
 	ReduceTaskID int
 }
 
