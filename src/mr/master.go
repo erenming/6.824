@@ -7,7 +7,6 @@ import (
 	"net/rpc"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,7 +25,6 @@ type ComputePhase uint8
 const (
 	PhaseMap ComputePhase = iota
 	PhaseReduce
-	PhaseReduceDone
 	PhaseDone
 )
 
@@ -38,6 +36,9 @@ type Master struct {
 	reduceTasks map[int]*Task
 	reduceMutex sync.Mutex
 
+	updateTask chan Task
+	readyTask  chan Task
+
 	workerPool   map[string]*workerInfo
 	workerMutex  sync.Mutex
 	workerExpire time.Duration
@@ -45,150 +46,23 @@ type Master struct {
 	phase atomic.Value
 
 	nReduce int
+	done    chan struct{}
 }
 
 type workerInfo struct {
 	ID       string
 	lastSeen time.Time
 	timer    *time.Timer
+	task     Task
 }
 
 type Task struct {
 	ID        int
+	Type      TaskType
 	Filenames []string
 	State     TaskState
-}
-
-type HeartBeatResp struct {
-}
-
-type HeartBeatReq struct {
-	WorkerID string
-}
-
-// Your code here -- RPC handlers for the worker to call.
-func (m *Master) HeartBeat(args *HeartBeatReq, reply *HeartBeatResp) error {
-	m.workerMutex.Lock()
-	defer m.workerMutex.Unlock()
-	w, ok := m.workerPool[args.WorkerID]
-	if !ok {
-		m.addWorker(args.WorkerID)
-		return nil
-	}
-
-	// update worker
-	w.lastSeen = time.Now()
-	if !w.timer.Stop() {
-		select {
-		case <-w.timer.C:
-		default:
-		}
-	}
-	w.timer.Reset(m.workerExpire)
-	return nil
-}
-
-func (m *Master) WorkerRegister(args *WorkerRegisterReq, reply *WorkerRegisterResp) error {
-	m.addWorker(args.WorkerID)
-	return nil
-}
-
-func (m *Master) addWorker(id string) {
-	w := &workerInfo{
-		ID:       id,
-		lastSeen: time.Now(),
-	}
-	timer := time.AfterFunc(m.workerExpire, func() {
-		m.workerMutex.Lock()
-		delete(m.workerPool, w.ID)
-		m.workerMutex.Unlock()
-	})
-	w.timer = timer
-
-	m.workerMutex.Lock()
-	m.workerPool[w.ID] = w
-	m.workerMutex.Unlock()
-}
-
-func (m *Master) WorkerLogout(args *WorkerLogoutReq, reply *WorkerLogOutResp) error {
-	m.workerMutex.Lock()
-	defer m.workerMutex.Unlock()
-	delete(m.workerPool, args.WorkerID)
-	if len(m.workerPool) == 0 {
-		m.phase.Store(PhaseDone)
-	}
-	return nil
-}
-
-func (m *Master) ReportMapResult(args *MapTaskReport, reply *MapTaskReportResponse) error {
-	if !m.existedWorker(args.WorkerID) {
-		return nil
-	}
-
-	m.reduceMutex.Lock()
-	for _, info := range args.ReduceInfos {
-		t, ok := m.reduceTasks[info.ReduceTaskID]
-		if !ok {
-			m.reduceTasks[info.ReduceTaskID] = &Task{
-				ID:        info.ReduceTaskID,
-				Filenames: []string{info.InterFileLocation},
-				State:     Idle,
-			}
-		} else {
-			t.Filenames = append(t.Filenames, info.InterFileLocation)
-		}
-	}
-	m.reduceMutex.Unlock()
-
-	m.mapMutex.Lock()
-	delete(m.mapTasks, args.MapTaskID)
-	if len(m.mapTasks) == 0 {
-		m.phase.Store(PhaseReduce)
-	}
-	m.mapMutex.Unlock()
-
-	return nil
-}
-
-func (m *Master) ReportReduceResult(args *ReduceTaskReport, reply *ReduceTaskReportResponse) error {
-	if !m.existedWorker(args.WorkerID) {
-		return nil
-	}
-
-	m.reduceMutex.Lock()
-	delete(m.reduceTasks, args.ReduceTaskID)
-	if len(m.reduceTasks) == 0 {
-		m.phase.Store(PhaseReduceDone)
-	}
-	m.reduceMutex.Unlock()
-	return nil
-}
-
-func (m *Master) TaskDistribute(args *TaskRequest, reply *TaskResponse) error {
-	if !m.existedWorker(args.WorkerID) {
-		return nil
-	}
-
-	phase := m.phase.Load().(ComputePhase)
-	switch phase {
-	case PhaseMap:
-		reply.Task = MapTask
-		t, ok := m.selectIdleMapTask()
-		if !ok {
-			return nil
-		}
-		return m.distributeMapTask(reply, t)
-	case PhaseReduce:
-		reply.Task = ReduceTask
-		t, ok := m.selectIdleReduceTask()
-		if !ok {
-			return nil
-		}
-		return m.distributeReduceTask(reply, t)
-	case PhaseReduceDone, PhaseDone:
-		reply.NoMoreTask = true
-	}
-	return nil
+	// update action
+	appendFile bool
 }
 
 func (m *Master) existedWorker(id string) bool {
@@ -198,32 +72,23 @@ func (m *Master) existedWorker(id string) bool {
 	return ok
 }
 
-func (m *Master) distributeMapTask(reply *TaskResponse, task *Task) error {
-	m.mapMutex.Lock()
-	defer m.mapMutex.Unlock()
-
+func (m *Master) distributeMapTask(reply *TaskResponse, task Task) error {
 	reply.Task = MapTask
 	reply.NumReduce = m.nReduce
 	reply.Filenames = task.Filenames
 	reply.ID = task.ID
 
-	task.State = InProgress
-	log.Printf("distributeMapTask %d", reply.ID)
+	// log.Printf("distributeMapTask %d", reply.ID)
 	return nil
 }
 
-func (m *Master) distributeReduceTask(reply *TaskResponse, task *Task) error {
-	m.reduceMutex.Lock()
-	defer m.reduceMutex.Unlock()
-
+func (m *Master) distributeReduceTask(reply *TaskResponse, task Task) error {
 	reply.Task = ReduceTask
 	reply.Filenames = task.Filenames
 	reply.ID = task.ID
 
-	task.State = InProgress
-
-	sort.Strings(reply.Filenames)
-	log.Printf("distributeReduceTask %d, filenames: %+v", reply.ID, reply.Filenames)
+	// sort.Strings(reply.Filenames)
+	// log.Printf("distributeReduceTask %d, filenames: %+v", reply.ID, reply.Filenames)
 	return nil
 }
 
@@ -280,17 +145,72 @@ func (m *Master) server() {
 // if the entire job has finished.
 //
 func (m *Master) Done() bool {
-	return m.phase.Load().(ComputePhase) == PhaseDone
+	phase := m.phase.Load().(ComputePhase)
+	return phase == PhaseDone
 }
 
-func (m *Master) completedMap() bool {
-	m.mapMutex.Lock()
-	defer m.mapMutex.Unlock()
-	return len(m.mapTasks) == 0
+func (m *Master) consumeMapTask() {
+	for {
+		select {
+		case t := <-m.updateTask:
+			switch t.Type {
+			case MapTask:
+				m.mapMutex.Lock()
+				if t.State == Completed {
+					delete(m.mapTasks, t.ID)
+				} else {
+					m.mapTasks[t.ID] = &t
+				}
+				if len(m.mapTasks) == 0 {
+					m.phase.Store(PhaseReduce)
+				}
+				m.mapMutex.Unlock()
+			case ReduceTask:
+				m.reduceMutex.Lock()
+				if t.State == Completed {
+					delete(m.reduceTasks, t.ID)
+				} else {
+					val, ok := m.reduceTasks[t.ID]
+					if ok && t.appendFile {
+						t.Filenames = append(t.Filenames, val.Filenames...)
+					}
+					m.reduceTasks[t.ID] = &t
+				}
+
+				if len(m.reduceTasks) == 0 {
+					m.phase.Store(PhaseDone)
+				}
+				m.reduceMutex.Unlock()
+			default:
+				log.Printf("unknown task type: %d", t.Type)
+			}
+		case <-m.done:
+			return
+		}
+	}
 }
 
-func (m *Master) completedReduce() bool {
-	return len(m.reduceTasks) == 0
+func (m *Master) schedule() {
+	for {
+		switch m.phase.Load().(ComputePhase) {
+		case PhaseMap:
+			t, ok := m.selectIdleMapTask()
+			if ok {
+				t.State = InProgress
+				m.readyTask <- *t
+			}
+		case PhaseReduce:
+			t, ok := m.selectIdleReduceTask()
+			if ok {
+				t.State = InProgress
+				m.readyTask <- *t
+			}
+		default:
+			return
+		}
+		time.Sleep(time.Second)
+	}
+
 }
 
 //
@@ -304,6 +224,9 @@ func MakeMaster(files []string, nReduce int) *Master {
 		workerPool:   map[string]*workerInfo{},
 		reduceTasks:  map[int]*Task{},
 		workerExpire: 10 * time.Second,
+		done:         make(chan struct{}),
+		updateTask:   make(chan Task),
+		readyTask:    make(chan Task),
 	}
 
 	mapTasks := make(map[int]*Task, 0)
@@ -327,5 +250,8 @@ func MakeMaster(files []string, nReduce int) *Master {
 	m.phase.Store(PhaseMap)
 
 	m.server()
+
+	go m.consumeMapTask()
+	go m.schedule()
 	return &m
 }

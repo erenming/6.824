@@ -39,31 +39,46 @@ func ihash(key string) int {
 func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
 	id := RandStringRunes(20)
 	call("Master.WorkerRegister", &WorkerRegisterReq{WorkerID: id}, &WorkerRegisterResp{})
+	done := make(chan struct{})
 
+	go func() {
+		for {
+			task := AskForTask(TaskRequest{WorkerID: id})
+			if task.NoMoreTask {
+				// log.Printf("worker %s break", id)
+				break
+			}
+			switch task.Task {
+			case MapTask:
+				if mr, err := maptask(task, mapf); err != nil {
+					panic(err)
+				} else {
+					mr.WorkerID = id
+					call("Master.ReportMapResult", mr, &MapTaskReportResponse{})
+				}
+			case ReduceTask:
+				if err := reducetask(task, reducef); err != nil {
+					panic(err)
+				}
+				call("Master.ReportReduceResult", &ReduceTaskReport{ReduceTaskID: task.ID, WorkerID: id}, &ReduceTaskReportResponse{})
+			}
+			time.Sleep(2 * time.Second)
+		}
+		close(done)
+	}()
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
 	for {
-		task := AskForTask(TaskRequest{WorkerID: id})
-		if task.NoMoreTask {
-			log.Printf("break")
-			break
+		select {
+		case <-done:
+			call("Master.WorkerLogout", &WorkerLogoutReq{WorkerID: id}, &WorkerLogOutResp{})
+			return
+		case <-ticker.C:
+			call("Master.HeartBeat", &HeartBeatReq{WorkerID: id}, &HeartBeatResp{})
 		}
-		switch task.Task {
-		case MapTask:
-			if mr, err := maptask(task, mapf); err != nil {
-				panic(err)
-			} else {
-				mr.WorkerID = id
-				call("Master.ReportMapResult", mr, &MapTaskReportResponse{})
-			}
-		case ReduceTask:
-			if err := reducetask(task, reducef); err != nil {
-				panic(err)
-			}
-			call("Master.ReportReduceResult", &ReduceTaskReport{ReduceTaskID: task.ID, WorkerID: id}, &ReduceTaskReportResponse{})
-		}
-		time.Sleep(3 * time.Second)
 	}
 
-	call("Master.WorkerLogout", &WorkerLogoutReq{WorkerID: id}, &WorkerLogOutResp{})
 }
 
 func maptask(task TaskResponse, mapf func(string, string) []KeyValue) (*MapTaskReport, error) {

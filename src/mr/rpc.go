@@ -81,6 +81,14 @@ type ReduceTaskReport struct {
 type ReduceTaskReportResponse struct {
 }
 
+type HeartBeatResp struct {
+}
+
+type HeartBeatReq struct {
+	WorkerID string
+}
+
+
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the master.
 // Can't use the current directory since
