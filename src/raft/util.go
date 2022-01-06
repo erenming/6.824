@@ -7,7 +7,7 @@ import (
 )
 
 // Debugging
-const Debug = 0
+const Debug = 1
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -19,4 +19,8 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 func randDuration(start, end time.Duration) time.Duration {
 	rand.Seed(time.Now().UnixNano())
 	return time.Duration(rand.Intn(int(end)-int(start)) + int(start))
+}
+
+func randomElectionTimeout() time.Duration {
+	return randDuration(150*time.Millisecond, 300*time.Millisecond)
 }

@@ -1,8 +1,6 @@
 package raft
 
 import (
-	"log"
-	"sync"
 	"time"
 )
 
@@ -24,54 +22,55 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	log.Printf("args: %+v, currentTerm: %d me: %d \n", args, rf.currentTerm, rf.me)
-	if args.Term < rf.currentTerm {
+	if rf.votedFor != nil || args.Term < rf.currentTerm {
 		reply.VoteGranted = false
 		reply.Term = rf.currentTerm
 		return
 	}
-	// TODO more logic
+
+	rf.votedFor = &args.CandidateId
 	reply.VoteGranted = true
 	reply.Term = args.Term
 }
 
 func (rf *Raft) runRequestVoteChecker() {
-	log.Printf("runRequestVoteChecker started")
+	rf.DPrintf("runRequestVoteChecker started")
 	for {
-		if time.Since(rf.lastApplyTime) >= rf.electionTimout {
-			// trigger request vote
-			rf.eventCh <- F2C
+		time.Sleep(rf.electionTimout / 10)
+		if rf.getState() != leader && time.Since(rf.LastApplyTime()) >= rf.electionTimout {
+			// start request vote
+			rf.startElection()
 		}
-		time.Sleep(rf.electionTimout / 3)
 	}
 }
 
 func (rf *Raft) startElection() {
+	rf.incTerm()
+	rf.setState(candidate)
+	rf.SetVotedFor(nil)
+
 	replies := rf.parallelismRequestVote(&RequestVoteArgs{
 		Term:        rf.currentTerm,
 		CandidateId: rf.me,
 	})
-	log.Printf("replies: %+v\n", replies)
-	// handle replies
 	rf.handleReplies(replies)
 }
 
 func (rf *Raft) parallelismRequestVote(args *RequestVoteArgs) []RequestVoteReply {
-	replies := make([]RequestVoteReply, len(rf.peers))
-	var wg sync.WaitGroup
-	wg.Add(len(rf.peers))
+	replies := make([]RequestVoteReply, 0)
 	for idx, _ := range rf.peers {
-		go func(sid int) {
-			defer wg.Done()
-			ok := rf.sendRequestVote(sid, args, &replies[sid])
+		if idx == rf.me {
+			continue
+		}
 
-			if !ok {
-				log.Println("sendRequestVote failed")
-			}
-
-		}(idx)
+		r := RequestVoteReply{}
+		ok := rf.sendRequestVote(idx, args, &r)
+		if ok {
+			replies = append(replies, r)
+		} else {
+			// DPrintf("sendRequestVote failed")
+		}
 	}
-	wg.Wait()
 	return replies
 }
 
@@ -82,11 +81,23 @@ func (rf *Raft) handleReplies(replies []RequestVoteReply) {
 			winCnt++
 		}
 	}
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	if winCnt*2 > len(rf.peers) && rf.state == candidate {
-			rf.eventCh <- C2L
+	rf.DPrintf("handleReplies: %+v", replies)
+	if rf.getState() == candidate && (winCnt+1)*2 > len(rf.peers) {
+		rf.setState(leader)
 
+		_ = rf.parallelismAppendEntities(&AppendEntriesArgs{
+			Term:     rf.currentTerm,
+			LeaderId: rf.me,
+		})
+
+		rf.doneHeartBeat = make(chan struct{})
+		go rf.runHeartbeat(rf.doneHeartBeat)
+		rf.DPrintf("after win %s", rf.getState())
 		return
 	}
+	rf.DPrintf("not win")
+}
+
+func (rf *Raft) DPrintf(format string, a ...interface{}) (n int, err error) {
+	return DPrintf(format+" === [me: %d]", append(a, rf.me)...)
 }
