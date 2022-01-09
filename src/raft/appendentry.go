@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"sync"
 	"time"
 )
 
@@ -17,54 +18,78 @@ type AppendEntriesReply struct {
 // rpc handler for AppendEntries
 // reset election timeout, avoid of elect as leader
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	if args.Term < rf.currentTerm {
-		reply.Term = rf.currentTerm
+	currentTerm := rf.CurrentTerm()
+	if currentTerm > args.Term {
+		rf.DPrintf("invalid AppendEntries: %+v, myterm: %d", args, currentTerm)
+		reply.Term = currentTerm
 		reply.Success = false
 		return
 	}
-
-	if rf.state == candidate {
-		rf.state = follower
-	}
-	rf.currentTerm = args.Term
-
-	reply.Term = rf.currentTerm
+	rf.asFollowerEvent <- followerEvent{Term: args.Term}
+	rf.DPrintf("as follower event end")
+	reply.Term = currentTerm
 	reply.Success = true
-	rf.lastApplyTime = time.Now()
 }
 
-func (rf *Raft) runHeartbeat(done chan struct{}) {
-	DPrintf("heatbeat loop started!")
+func (rf *Raft) runHeartbeat() {
+	ticker := time.NewTicker(time.Millisecond * 10)
+	defer func() {
+		rf.DPrintf("heartbeat stoped!")
+		ticker.Stop()
+	}()
 	for {
+		rf.DPrintf("send heartbeat")
+		rf.broadcastAppendEntry()
 		select {
-		case <-done:
+		case <-rf.doneHeartBeat:
 			return
-		default:
+		case <-ticker.C:
 		}
-		time.Sleep(rf.electionTimout / 300)
-		_ = rf.parallelismAppendEntities(&AppendEntriesArgs{
-			Term:     rf.currentTerm,
-			LeaderId: rf.me,
-		})
 	}
 }
 
-func (rf *Raft) parallelismAppendEntities(args *AppendEntriesArgs) []AppendEntriesReply {
+func (rf *Raft) broadcastAppendEntry() {
+	args := &AppendEntriesArgs{
+		Term:     rf.CurrentTerm(),
+		LeaderId: rf.me,
+	}
+	ch := make(chan AppendEntriesReply, 0)
 	replies := make([]AppendEntriesReply, 0)
+	var wg sync.WaitGroup
+	wg.Add(len(rf.peers) - 1)
 	for idx, _ := range rf.peers {
 		if idx == rf.me {
 			continue
 		}
+		go func(peer int) {
+			defer wg.Done()
+			r := AppendEntriesReply{}
+			ok := rf.sendAppendEntities(peer, args, &r)
+			if ok {
+				ch <- r
+				rf.DPrintf("send reply: %+v, args: %+v", r, args)
+			} else {
+				rf.DPrintf("not ok, args: %+v", args)
+			}
+		}(idx)
+	}
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+	for r := range ch {
+		replies = append(replies, r)
+	}
+	rf.handleAppendEntryReplies(replies)
+}
 
-		r := AppendEntriesReply{}
-		ok := rf.sendAppendEntities(idx, args, &r)
-		if ok {
-			replies = append(replies, r)
-		} else {
-			// DPrintf("sendAppendEntities failed")
+func (rf *Raft) handleAppendEntryReplies(replies []AppendEntriesReply) {
+	rf.DPrintf("handleAppendEntryReplies: %+v, myterm: %d", replies, rf.CurrentTerm())
+	for _, r := range replies {
+		if r.Term > rf.CurrentTerm() {
+			rf.DPrintf("as follower")
+			rf.asFollowerEvent <- followerEvent{Term: r.Term}
+			rf.DPrintf("as follower done")
 		}
 	}
-	return replies
 }

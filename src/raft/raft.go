@@ -31,12 +31,12 @@ type ApplyMsg struct {
 	CommandIndex int
 }
 
-type serverState string
+type ServerRole string
 
 const (
-	leader    serverState = "leader"
-	candidate serverState = "candidate"
-	follower  serverState = "follower"
+	leader    ServerRole = "leader"
+	candidate ServerRole = "candidate"
+	follower  ServerRole = "follower"
 )
 
 type LogEntry struct {
@@ -54,21 +54,35 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-	lastApplyTime time.Time
-	// tester limits you to 10 heartbeats per second
-	electionTimout time.Duration
-	// electionTimer  *time.Timer
-	doneHeartBeat chan struct{}
-	state         serverState
+	lastApplyTime   time.Time
+	doneHeartBeat   chan struct{}
+	electionEvent   chan struct{}
+	asLeaderEvent   chan struct{}
+	asFollowerEvent chan followerEvent
+	role            ServerRole
 
-	currentTerm int
-	votedFor    *int
-	logEntries  []LogEntry
-	commitIndex int
-	lastApplied int
+	currentTerm      int
+	votedFor         *int
+	asCandidateEvent chan struct{}
 
-	nextIndex  []int
-	matchIndex []int
+	// logEntries  []LogEntry
+	// commitIndex int
+	// lastApplied int
+	//
+	// nextIndex  []int
+	// matchIndex []int
+}
+
+func (rf *Raft) Role() ServerRole {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.role
+}
+
+func (rf *Raft) SetRole(role ServerRole) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.role = role
 }
 
 func (rf *Raft) VotedFor() *int {
@@ -100,25 +114,18 @@ func (rf *Raft) SetLastApplyTime(lastApplyTime time.Time) {
 func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	return rf.currentTerm, rf.state == leader
+	return rf.currentTerm, rf.role == leader
 }
 
-func (rf *Raft) getState() serverState {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	return rf.state
-}
-
-func (rf *Raft) setState(state serverState) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	rf.state = state
-}
-
-func (rf *Raft) getTerm() int {
+func (rf *Raft) CurrentTerm() int {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	return rf.currentTerm
+}
+func (rf *Raft) SetCurrentTerm(term int) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.currentTerm = term
 }
 
 func (rf *Raft) incTerm() {
@@ -205,17 +212,23 @@ func (rf *Raft) killed() bool {
 }
 
 func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan ApplyMsg) *Raft {
-	rf := &Raft{}
+	rf := &Raft{
+		doneHeartBeat:    make(chan struct{}),
+		electionEvent:    make(chan struct{}),
+		asLeaderEvent:    make(chan struct{}),
+		asCandidateEvent: make(chan struct{}),
+		asFollowerEvent:  make(chan followerEvent),
+	}
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
-	rf.state = follower
-	// rf.electionTimer = time.NewTimer(randomElectionTimeout())
-	rf.electionTimout = randomElectionTimeout()
+	rf.role = follower
 	rf.lastApplyTime = time.Now()
 	go rf.runRequestVoteChecker()
+	go rf.ElectionEventLoop()
+	go rf.roleEventLoop()
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())

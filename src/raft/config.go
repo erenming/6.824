@@ -8,17 +8,21 @@ package raft
 // test with the original before submitting.
 //
 
-import "../labrpc"
-import "log"
-import "sync"
-import "testing"
-import "runtime"
-import "math/rand"
-import crand "crypto/rand"
-import "math/big"
-import "encoding/base64"
-import "time"
-import "fmt"
+import (
+	crand "crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"log"
+	"math/big"
+	"math/rand"
+	"runtime"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"../labrpc"
+)
 
 func randstring(n int) string {
 	b := make([]byte, 2*n)
@@ -233,7 +237,7 @@ func (cfg *config) cleanup() {
 
 // attach server i to the net.
 func (cfg *config) connect(i int) {
-	// fmt.Printf("connect(%d)\n", i)
+	fmt.Printf("connect(%d)\n", i)
 
 	cfg.connected[i] = true
 
@@ -256,7 +260,7 @@ func (cfg *config) connect(i int) {
 
 // detach server i from the net.
 func (cfg *config) disconnect(i int) {
-	// fmt.Printf("disconnect(%d)\n", i)
+	fmt.Printf("disconnect(%d)\n", i)
 
 	cfg.connected[i] = false
 
@@ -300,7 +304,7 @@ func (cfg *config) setlongreordering(longrel bool) {
 // check that there's exactly one leader.
 // try a few times in case re-elections are needed.
 func (cfg *config) checkOneLeader() int {
-	for iters := 0; iters < 10; iters++ {
+	for iters := 0; iters < 30; iters++ {
 		ms := 450 + (rand.Int63() % 100)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
 
@@ -324,6 +328,7 @@ func (cfg *config) checkOneLeader() int {
 		}
 
 		if len(leaders) != 0 {
+			fmt.Println("check one leader is", leaders[lastTermWithLeader][0])
 			return leaders[lastTermWithLeader][0]
 		}
 	}
@@ -345,6 +350,17 @@ func (cfg *config) checkTerms() int {
 		}
 	}
 	return term
+}
+
+func (cfg *config) PrintAllServer() {
+	var sb strings.Builder
+	sb.WriteString("\nPrintAllServer start\n")
+	for i := 0; i < cfg.n; i++ {
+		term, isLeader := cfg.rafts[i].GetState()
+		sb.WriteString(fmt.Sprintf("\tserver: %d, term: %d, isLeader: %+v\n", i, term, isLeader))
+	}
+	sb.WriteString("PrintAllServer end\n")
+	fmt.Println(sb.String())
 }
 
 // check that there's no leader
