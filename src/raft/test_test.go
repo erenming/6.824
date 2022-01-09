@@ -8,12 +8,15 @@ package raft
 // test with the original before submitting.
 //
 
-import "testing"
-import "fmt"
-import "time"
-import "math/rand"
-import "sync/atomic"
-import "sync"
+import (
+	"fmt"
+	"math/rand"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
 
 // The tester generously allows solutions to complete elections in one second
 // (much more than the paper's range of timeouts).
@@ -27,7 +30,9 @@ func TestInitialElection2A(t *testing.T) {
 	cfg.begin("Test (2A): initial election")
 
 	// is a leader elected?
+	cfg.PrintAllServer()
 	cfg.checkOneLeader()
+	fmt.Println(1)
 
 	// sleep a bit to avoid racing with followers learning of the
 	// election, then check that all peers agree on the term.
@@ -51,6 +56,7 @@ func TestInitialElection2A(t *testing.T) {
 }
 
 func TestReElection2A(t *testing.T) {
+	return
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -107,6 +113,17 @@ func TestBasicAgree2B(t *testing.T) {
 	}
 
 	cfg.end()
+}
+
+func (cfg *config) PrintAllServer() {
+	var sb strings.Builder
+	sb.WriteString("\nPrintAllServer start\n")
+	for i := 0; i < cfg.n; i++ {
+		term, isLeader := cfg.rafts[i].GetState()
+		sb.WriteString(fmt.Sprintf("\tserver: %d, term: %d, isLeader: %+v\n", i, term, isLeader))
+	}
+	sb.WriteString("PrintAllServer end\n")
+	fmt.Println(sb.String())
 }
 
 //
