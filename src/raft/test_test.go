@@ -23,6 +23,7 @@ import (
 const RaftElectionTimeout = 1000 * time.Millisecond
 
 func TestInitialElection2A(t *testing.T) {
+	return
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -30,9 +31,7 @@ func TestInitialElection2A(t *testing.T) {
 	cfg.begin("Test (2A): initial election")
 
 	// is a leader elected?
-	cfg.PrintAllServer()
 	cfg.checkOneLeader()
-	fmt.Println(1)
 
 	// sleep a bit to avoid racing with followers learning of the
 	// election, then check that all peers agree on the term.
@@ -56,7 +55,6 @@ func TestInitialElection2A(t *testing.T) {
 }
 
 func TestReElection2A(t *testing.T) {
-	return
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -64,6 +62,7 @@ func TestReElection2A(t *testing.T) {
 	cfg.begin("Test (2A): election after network failure")
 
 	leader1 := cfg.checkOneLeader()
+	cfg.PrintAllServer()
 
 	// if the leader disconnects, a new one should be elected.
 	cfg.disconnect(leader1)

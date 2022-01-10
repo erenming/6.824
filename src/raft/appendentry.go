@@ -40,6 +40,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	reply.Term = args.Term
 	reply.Success = true
+	// rf.DPrintf("AppendEntries success, role: %s", rf.role)
 	return
 }
 
@@ -70,7 +71,7 @@ func (rf *Raft) broadcastAE() []AppendEntriesReply {
 }
 
 func (rf *Raft) handleAppendEntryReplies(resp []AppendEntriesReply) {
-	// rf.DPrintf("handleAppendEntryReplies, resp: %+v, term: %d", resp, rf.CurrentTerm())
+	// rf.DPrintf("handleAppendEntryReplies, resp: %+v, term: %d, role: %s", resp, rf.CurrentTerm(), rf.Role())
 	for _, r := range resp {
 		if r.Term > rf.CurrentTerm() {
 			rf.SetCurrentTerm(r.Term)

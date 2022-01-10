@@ -39,12 +39,17 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
+		if rf.role != Follower { // become follower
+			rf.role = Follower
+			rf.votedFor = -1
+			rf.refreshTime = time.Now()
+		}
 	}
+
+	rf.electionTimeout = randomElectionTimeout()
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateID {
 		rf.votedFor = args.CandidateID
 		rf.refreshTime = time.Now()
-		rf.electionTimeout = randomElectionTimeout()
-
 		reply.Term = args.Term
 		reply.VoteGranted = true
 	} else {
@@ -109,7 +114,7 @@ func (rf *Raft) broadcastRV() []RequestVoteReply {
 }
 
 func (rf *Raft) handleRequestVoteReplies(resp []RequestVoteReply) bool {
-	rf.DPrintf("handleRequestVoteReplies, resp: %+v, term: %d", resp, rf.CurrentTerm())
+	rf.DPrintf("handleRequestVoteReplies, resp: %+v, term: %d, role: %s", resp, rf.CurrentTerm(), rf.Role())
 	for _, r := range resp {
 		if r.Term > rf.CurrentTerm() {
 			rf.SetCurrentTerm(r.Term)
