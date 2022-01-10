@@ -91,7 +91,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // the struct itself.
 //
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
+	start := time.Now()
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+	rf.DPrintf("sendRequestVote, ok: %v, idx: %d, args: %+v, elapsed: %s", ok, server, args, time.Since(start))
 	return ok
 }
 
@@ -110,7 +112,6 @@ func (rf *Raft) broadcastRV() []RequestVoteReply {
 		// TODO always fail
 		ok := rf.sendRequestVote(idx, args, &reply)
 		if !ok {
-			rf.DPrintf("broadcastRV not ok, idx: %d, args: %+v", idx, args)
 			continue
 		}
 		resp = append(resp, reply)

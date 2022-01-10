@@ -74,6 +74,8 @@ type Raft struct {
 	eventElection  chan struct{}
 	becomeLeader   chan struct{}
 	becomeFollower chan struct{}
+
+	debugMu sync.Mutex
 }
 
 func (rf *Raft) CurrentTerm() int {
@@ -216,6 +218,8 @@ func (rf *Raft) killed() bool {
 }
 
 func (rf *Raft) DPrintf(format string, a ...interface{}) (n int, err error) {
+	rf.debugMu.Lock()
+	defer rf.debugMu.Unlock()
 	return DPrintf(format+" === [me: %d]", append(a, rf.me)...)
 }
 
@@ -271,7 +275,7 @@ func (rf *Raft) checkElectionTimeout() {
 			continue
 		}
 		// TODO election trigger
-		rf.DPrintf("checkElectionTimeout trigger, role: %s, term: %d", rf.Role(), rf.CurrentTerm())
+		// rf.DPrintf("checkElectionTimeout trigger, role: %s, term: %d", rf.Role(), rf.CurrentTerm())
 		rf.SetRefreshTime(time.Now())
 		rf.SetElectionTimeout(randomElectionTimeout())
 		rf.eventElection <- struct{}{}
