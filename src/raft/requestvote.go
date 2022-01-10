@@ -32,9 +32,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	start := time.Now()
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
+		rf.DPrintf("Reject RequestVote, elasped: %s, args: %+v, reply: %+v", time.Since(start), args, reply)
 		return
 	}
 	if args.Term > rf.currentTerm {
@@ -56,6 +58,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.Term = args.Term
 		reply.VoteGranted = false
 	}
+	rf.DPrintf("RequestVote, elasped: %s, args: %+v, reply: %+v", time.Since(start), args, reply)
 }
 
 //
@@ -104,8 +107,10 @@ func (rf *Raft) broadcastRV() []RequestVoteReply {
 			continue
 		}
 		reply := RequestVoteReply{}
+		// TODO always fail
 		ok := rf.sendRequestVote(idx, args, &reply)
 		if !ok {
+			rf.DPrintf("broadcastRV not ok, idx: %d, args: %+v", idx, args)
 			continue
 		}
 		resp = append(resp, reply)
@@ -114,7 +119,7 @@ func (rf *Raft) broadcastRV() []RequestVoteReply {
 }
 
 func (rf *Raft) handleRequestVoteReplies(resp []RequestVoteReply) bool {
-	rf.DPrintf("handleRequestVoteReplies, resp: %+v, term: %d, role: %s", resp, rf.CurrentTerm(), rf.Role())
+	// rf.DPrintf("handleRequestVoteReplies, resp: %+v, term: %d, role: %s", resp, rf.CurrentTerm(), rf.Role())
 	for _, r := range resp {
 		if r.Term > rf.CurrentTerm() {
 			rf.SetCurrentTerm(r.Term)

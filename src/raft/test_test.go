@@ -23,7 +23,6 @@ import (
 const RaftElectionTimeout = 1000 * time.Millisecond
 
 func TestInitialElection2A(t *testing.T) {
-	return
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()

@@ -271,7 +271,7 @@ func (rf *Raft) checkElectionTimeout() {
 			continue
 		}
 		// TODO election trigger
-		rf.DPrintf("checkElectionTimeout trigger, role: %s", rf.Role())
+		rf.DPrintf("checkElectionTimeout trigger, role: %s, term: %d", rf.Role(), rf.CurrentTerm())
 		rf.SetRefreshTime(time.Now())
 		rf.SetElectionTimeout(randomElectionTimeout())
 		rf.eventElection <- struct{}{}
@@ -283,7 +283,8 @@ func (rf *Raft) electionLoop() {
 		select {
 		case <-rf.eventElection:
 			if rf.Role() == Leader {
-				return
+				rf.DPrintf("leader continue")
+				continue
 			}
 
 			rf.mu.Lock()
@@ -294,13 +295,15 @@ func (rf *Raft) electionLoop() {
 			resp := rf.broadcastRV()
 
 			if rf.Role() == Follower {
+				rf.DPrintf("follower continue")
 				rf.becomeFollower <- struct{}{}
-				break
+				continue
 			}
 
 			isSelected := rf.handleRequestVoteReplies(resp)
 			if isSelected {
 				// todo two long to be received
+				rf.DPrintf("becomeLeader trigger")
 				rf.becomeLeader <- struct{}{}
 			}
 		}
