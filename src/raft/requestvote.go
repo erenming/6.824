@@ -41,16 +41,14 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
-		if rf.role != Follower { // become follower
-			rf.role = Follower
-			rf.votedFor = -1
-			rf.refreshTime = time.Now()
-		}
+		rf.role = Follower
+		rf.votedFor = args.CandidateID
 	}
 
-	rf.electionTimeout = randomElectionTimeout()
+	// rf.electionTimeout = randomElectionTimeout()
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateID {
 		rf.votedFor = args.CandidateID
+		rf.electionTimeout = randomElectionTimeout()
 		rf.refreshTime = time.Now()
 		reply.Term = args.Term
 		reply.VoteGranted = true
@@ -91,18 +89,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // the struct itself.
 //
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	start := time.Now()
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	rf.DPrintf("sendRequestVote, ok: %v, idx: %d, args: %+v, elapsed: %s", ok, server, args, time.Since(start))
 	return ok
 }
 
-func (rf *Raft) broadcastRV() []RequestVoteReply {
+func (rf *Raft) broadcastRV(args *RequestVoteArgs) []RequestVoteReply {
 	resp := make([]RequestVoteReply, 0)
-	args := &RequestVoteArgs{
-		Term:        rf.CurrentTerm(),
-		CandidateID: rf.me,
-	}
 	// TODO current
 	for idx, _ := range rf.peers {
 		if idx == rf.me {
@@ -119,12 +111,11 @@ func (rf *Raft) broadcastRV() []RequestVoteReply {
 	return resp
 }
 
-func (rf *Raft) handleRequestVoteReplies(resp []RequestVoteReply) bool {
-	// rf.DPrintf("handleRequestVoteReplies, resp: %+v, term: %d, role: %s", resp, rf.CurrentTerm(), rf.Role())
+func (rf *Raft) handleRequestVoteReplies(args *RequestVoteArgs, resp []RequestVoteReply) bool {
+	rf.DPrintf("handleRequestVoteReplies, resp: %+v, term: %d, role: %s", resp, rf.CurrentTerm(), rf.Role())
 	for _, r := range resp {
-		if r.Term > rf.CurrentTerm() {
-			rf.SetCurrentTerm(r.Term)
-			rf.becomeFollower <- struct{}{}
+		if rf.CurrentTerm() < r.Term {
+			rf.becomeFollower <- r.Term
 			return false
 		}
 	}

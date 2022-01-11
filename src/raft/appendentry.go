@@ -34,7 +34,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.currentTerm = args.Term
 	}
 	rf.role = Follower
-	rf.votedFor = -1
 	rf.electionTimeout = randomElectionTimeout()
 	rf.refreshTime = time.Now()
 
@@ -49,12 +48,9 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return ok
 }
 
-func (rf *Raft) broadcastAE() []AppendEntriesReply {
+func (rf *Raft) broadcastAE(args *AppendEntriesArgs) []AppendEntriesReply {
 	resp := make([]AppendEntriesReply, 0)
-	args := &AppendEntriesArgs{
-		Term:     rf.CurrentTerm(),
-		LeaderId: rf.me,
-	}
+
 	// TODO current
 	for idx, _ := range rf.peers {
 		if idx == rf.me {
@@ -70,12 +66,11 @@ func (rf *Raft) broadcastAE() []AppendEntriesReply {
 	return resp
 }
 
-func (rf *Raft) handleAppendEntryReplies(resp []AppendEntriesReply) {
+func (rf *Raft) handleAppendEntryReplies(args *AppendEntriesArgs, resp []AppendEntriesReply) {
 	// rf.DPrintf("handleAppendEntryReplies, resp: %+v, term: %d, role: %s", resp, rf.CurrentTerm(), rf.Role())
 	for _, r := range resp {
-		if r.Term > rf.CurrentTerm() {
-			rf.SetCurrentTerm(r.Term)
-			rf.becomeFollower <- struct{}{}
+		if r.Term > args.Term {
+			rf.becomeFollower <- r.Term
 			return
 		}
 	}

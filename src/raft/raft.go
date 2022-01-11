@@ -71,9 +71,9 @@ type Raft struct {
 	currentTerm, votedFor int
 	role                  ServerRole
 
-	eventElection  chan struct{}
-	becomeLeader   chan struct{}
-	becomeFollower chan struct{}
+	// eventElection  chan struct{}
+	becomeLeader   chan int
+	becomeFollower chan int
 
 	debugMu sync.Mutex
 }
@@ -251,11 +251,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.role = Follower
 	rf.votedFor = -1
 
-	rf.eventElection = make(chan struct{})
-	rf.becomeLeader = make(chan struct{})
-	rf.becomeLeader = make(chan struct{})
+	// rf.eventElection = make(chan struct{})
+	rf.becomeLeader = make(chan int)
+	rf.becomeLeader = make(chan int)
 	go rf.eventLoop()
-	go rf.electionLoop()
+	// go rf.electionLoop()
 	go rf.checkElectionTimeout()
 
 	return rf
@@ -275,62 +275,83 @@ func (rf *Raft) checkElectionTimeout() {
 			continue
 		}
 		// TODO election trigger
-		// rf.DPrintf("checkElectionTimeout trigger, role: %s, term: %d", rf.Role(), rf.CurrentTerm())
+		rf.DPrintf("checkElectionTimeout trigger, role: %s, term: %d", rf.Role(), rf.CurrentTerm())
+		rf.runElection()
 		rf.SetRefreshTime(time.Now())
 		rf.SetElectionTimeout(randomElectionTimeout())
-		rf.eventElection <- struct{}{}
+		// rf.eventElection <- struct{}{}
 	}
 }
 
-func (rf *Raft) electionLoop() {
-	for {
-		select {
-		case <-rf.eventElection:
-			if rf.Role() == Leader {
-				rf.DPrintf("leader continue")
-				continue
-			}
+// func (rf *Raft) electionLoop() {
+// 	for {
+// 		select {
+// 		case <-rf.eventElection:
+//
+// 		}
+// 	}
+// }
 
-			rf.mu.Lock()
-			rf.role = Candidate
-			rf.currentTerm++
-			rf.votedFor = rf.me
-			rf.mu.Unlock()
-			resp := rf.broadcastRV()
+func (rf *Raft) runElection() {
+	if rf.Role() == Leader {
+		rf.DPrintf("leader continue")
+		return
+	}
+	rf.mu.Lock()
+	rf.role = Candidate
+	rf.currentTerm++
+	rf.votedFor = rf.me
+	rf.mu.Unlock()
 
-			if rf.Role() == Follower {
-				rf.DPrintf("follower continue")
-				rf.becomeFollower <- struct{}{}
-				continue
-			}
+	args := &RequestVoteArgs{
+		Term:        rf.CurrentTerm(),
+		CandidateID: rf.me,
+	}
+	resp := rf.broadcastRV(args)
 
-			isSelected := rf.handleRequestVoteReplies(resp)
-			if isSelected {
-				// todo two long to be received
-				rf.DPrintf("becomeLeader trigger")
-				rf.becomeLeader <- struct{}{}
-			}
-		}
+	if rf.Role() == Follower {
+		rf.DPrintf("follower continue")
+		rf.becomeFollower <- args.Term
+		return
+	}
+
+	isSelected := rf.handleRequestVoteReplies(args, resp)
+	if isSelected {
+		// todo two long to be received
+		rf.DPrintf("becomeLeader trigger")
+		rf.becomeLeader <- args.Term
 	}
 }
 
 func (rf *Raft) eventLoop() {
 	for {
 		select {
-		case <-rf.becomeLeader:
-			rf.DPrintf("become leader")
+		case term := <-rf.becomeLeader:
+			if rf.CurrentTerm() > term {
+				rf.DPrintf("larger term")
+				return
+			}
+
 			rf.mu.Lock()
+			// rf.currentTerm = term
 			rf.role = Leader
-			rf.votedFor = -1
 			rf.mu.Unlock()
 			go rf.runHeartBeat()
-		case <-rf.becomeFollower:
+			rf.DPrintf("become leader")
+		case term := <-rf.becomeFollower:
+			// if rf.CurrentTerm() > term {
+			// 	rf.DPrintf("larger term")
+			// 	return
+			// }
+
 			rf.mu.Lock()
+			rf.currentTerm = term
 			rf.role = Follower
-			rf.votedFor = -1
 			rf.electionTimeout = randomElectionTimeout()
 			rf.refreshTime = time.Now()
 			rf.mu.Unlock()
+			rf.DPrintf("become follower")
+
 		}
 	}
 }
@@ -340,8 +361,11 @@ func (rf *Raft) runHeartBeat() {
 		if rf.Role() != Leader {
 			break
 		}
-		resp := rf.broadcastAE()
-		rf.handleAppendEntryReplies(resp)
+		args := &AppendEntriesArgs{
+			Term:     rf.CurrentTerm(),
+			LeaderId: rf.me,
+		}
+		rf.handleAppendEntryReplies(args, rf.broadcastAE(args))
 		time.Sleep(rf.ElectionTimeout() / 10)
 	}
 }
