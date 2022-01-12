@@ -28,18 +28,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.Term < rf.currentTerm {
 		reply.Term = args.Term
 		reply.Success = false
+		rf.DPrintf("AppendEntries false from %d with term: %d, role: %s", args.LeaderId, args.Term, rf.role)
 		return
 	}
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
 	}
 	rf.role = Follower
-	rf.electionTimeout = randomElectionTimeout()
+	// rf.electionTimeout = randomElectionTimeout()
 	rf.refreshTime = time.Now()
 
 	reply.Term = args.Term
 	reply.Success = true
-	// rf.DPrintf("AppendEntries success, role: %s", rf.role)
+	rf.DPrintf("AppendEntries success from %d with term: %d, role: %s", args.LeaderId, args.Term, rf.role)
 	return
 }
 
@@ -68,9 +69,14 @@ func (rf *Raft) broadcastAE(args *AppendEntriesArgs) []AppendEntriesReply {
 
 func (rf *Raft) handleAppendEntryReplies(args *AppendEntriesArgs, resp []AppendEntriesReply) {
 	// rf.DPrintf("handleAppendEntryReplies, resp: %+v, term: %d, role: %s", resp, rf.CurrentTerm(), rf.Role())
+	cterm := rf.CurrentTerm()
 	for _, r := range resp {
-		if r.Term > args.Term {
-			rf.becomeFollower <- r.Term
+		if cterm < r.Term {
+			rf.DPrintf("leader received bigger term")
+			rf.toFollower(r.Term)
+			return
+		} else if cterm > r.Term {
+			// ignore
 			return
 		}
 	}

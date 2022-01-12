@@ -71,11 +71,13 @@ type Raft struct {
 	currentTerm, votedFor int
 	role                  ServerRole
 
-	// eventElection  chan struct{}
-	becomeLeader   chan int
-	becomeFollower chan int
+	eventElection chan struct{}
+	// becomeLeader   chan int
+	// becomeFollower chan int
 
 	debugMu sync.Mutex
+
+	cntdebug int
 }
 
 func (rf *Raft) CurrentTerm() int {
@@ -252,9 +254,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.votedFor = -1
 
 	// rf.eventElection = make(chan struct{})
-	rf.becomeLeader = make(chan int)
-	rf.becomeLeader = make(chan int)
-	go rf.eventLoop()
+	// rf.becomeLeader = make(chan int)
+	// rf.becomeLeader = make(chan int)
+	// go rf.eventLoop()
 	// go rf.electionLoop()
 	go rf.checkElectionTimeout()
 
@@ -265,21 +267,23 @@ func (rf *Raft) checkElectionTimeout() {
 	for {
 		time.Sleep(5 * time.Millisecond)
 		if rf.Role() == Leader {
-			break
+			continue
 		}
 
 		rf.mu.Lock()
-		to := time.Since(rf.refreshTime) > rf.electionTimeout
+		since := time.Since(rf.refreshTime)
+		eto := rf.electionTimeout
+		to := since > eto
 		rf.mu.Unlock()
 		if !to {
 			continue
 		}
+		// rf.DPrintf("timeout, since: %s, electionTimeout: %s, myTerm: %d", since, rf.electionTimeout, rf.CurrentTerm())
 		// TODO election trigger
-		rf.DPrintf("checkElectionTimeout trigger, role: %s, term: %d", rf.Role(), rf.CurrentTerm())
-		rf.runElection()
+		// rf.DPrintf("checkElectionTimeout trigger, role: %s, term: %d", rf.Role(), rf.CurrentTerm())
 		rf.SetRefreshTime(time.Now())
+		rf.runElection()
 		rf.SetElectionTimeout(randomElectionTimeout())
-		// rf.eventElection <- struct{}{}
 	}
 }
 
@@ -293,10 +297,8 @@ func (rf *Raft) checkElectionTimeout() {
 // }
 
 func (rf *Raft) runElection() {
-	if rf.Role() == Leader {
-		rf.DPrintf("leader continue")
-		return
-	}
+	rf.cntdebug++
+
 	rf.mu.Lock()
 	rf.role = Candidate
 	rf.currentTerm++
@@ -307,58 +309,53 @@ func (rf *Raft) runElection() {
 		Term:        rf.CurrentTerm(),
 		CandidateID: rf.me,
 	}
-	resp := rf.broadcastRV(args)
 
-	if rf.Role() == Follower {
-		rf.DPrintf("follower continue")
-		rf.becomeFollower <- args.Term
-		return
-	}
+	start := time.Now()
+	// TODO 网络延迟可能会很大
+	ch := make(chan []RequestVoteReply)
+	go func() {
+		resp := rf.broadcastRV(args)
+		ch <- resp
+	}()
 
-	isSelected := rf.handleRequestVoteReplies(args, resp)
-	if isSelected {
-		// todo two long to be received
-		rf.DPrintf("becomeLeader trigger")
-		rf.becomeLeader <- args.Term
+	select {
+	case <-time.After(rf.ElectionTimeout()):
+	case resp := <-ch:
+		isSelected := rf.handleRequestVoteReplies(args, resp)
+		rf.DPrintf("broadcastRV, elapsed: %s, args.Term: %d, resp: %+v, myTerm: %d, myRole: %s, times: %d", time.Since(start), args.Term, resp, rf.CurrentTerm(), rf.Role(), rf.cntdebug)
+		if isSelected && rf.Role() != Follower {
+			rf.DPrintf("selected as leader, args: %+v, resp: %+v", args, resp)
+			rf.toLeader()
+		}
+		close(ch)
 	}
 }
 
-func (rf *Raft) eventLoop() {
-	for {
-		select {
-		case term := <-rf.becomeLeader:
-			if rf.CurrentTerm() > term {
-				rf.DPrintf("larger term")
-				return
-			}
-
-			rf.mu.Lock()
-			// rf.currentTerm = term
-			rf.role = Leader
-			rf.mu.Unlock()
-			go rf.runHeartBeat()
-			rf.DPrintf("become leader")
-		case term := <-rf.becomeFollower:
-			// if rf.CurrentTerm() > term {
-			// 	rf.DPrintf("larger term")
-			// 	return
-			// }
-
-			rf.mu.Lock()
-			rf.currentTerm = term
-			rf.role = Follower
-			rf.electionTimeout = randomElectionTimeout()
-			rf.refreshTime = time.Now()
-			rf.mu.Unlock()
-			rf.DPrintf("become follower")
-
-		}
+func (rf *Raft) toLeader() {
+	rf.mu.Lock()
+	rf.role = Leader
+	args := &AppendEntriesArgs{
+		Term:     rf.currentTerm,
+		LeaderId: rf.me,
 	}
+	rf.broadcastAE(args)
+	rf.mu.Unlock()
+	go rf.runHeartBeat()
+}
+
+func (rf *Raft) toFollower(term int) {
+	rf.mu.Lock()
+	rf.currentTerm = term
+	rf.role = Follower
+	rf.electionTimeout = randomElectionTimeout()
+	rf.refreshTime = time.Now()
+	rf.mu.Unlock()
 }
 
 func (rf *Raft) runHeartBeat() {
 	for {
 		if rf.Role() != Leader {
+			rf.DPrintf("break runHeartBeat")
 			break
 		}
 		args := &AppendEntriesArgs{
