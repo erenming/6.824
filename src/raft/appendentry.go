@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"sync"
 	"time"
 )
 
@@ -52,36 +51,23 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return ok
 }
 
-func (rf *Raft) broadcastAE(args *AppendEntriesArgs) []AppendEntriesReply {
-	resp := make([]AppendEntriesReply, 0)
-	ch := make(chan AppendEntriesReply)
-	// TODO current
-	var wg sync.WaitGroup
-	wg.Add(len(rf.peers) - 1)
+func (rf *Raft) broadcastAE(args *AppendEntriesArgs) {
 	for idx, _ := range rf.peers {
 		if idx == rf.me {
 			continue
 		}
 		go func(server int) {
-			defer wg.Done()
 			reply := AppendEntriesReply{}
 			ok := rf.sendAppendEntries(server, args, &reply)
 			if !ok {
 				return
 			}
-			ch <- reply
+			// if rf.CurrentTerm() < reply.Term {
+			// 	rf.DPrintf("invalid reply: %+v, toFollower", reply)
+			// 	rf.toFollower(reply.Term)
+			// }
 		}(idx)
-
-
 	}
-	go func() {
-		wg.Wait()
-		close(ch)
-	}()
-	for reply := range ch {
-		resp = append(resp, reply)
-	}
-	return resp
 }
 
 func (rf *Raft) handleAppendEntryReplies(args *AppendEntriesArgs, resp []AppendEntriesReply) {

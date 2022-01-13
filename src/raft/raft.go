@@ -336,11 +336,11 @@ func (rf *Raft) toLeader() {
 	rf.mu.Lock()
 	rf.role = Leader
 	rf.mu.Unlock()
-	args := &AppendEntriesArgs{
-		Term:     rf.currentTerm,
-		LeaderId: rf.me,
-	}
-	rf.broadcastAE(args)
+	// args := &AppendEntriesArgs{
+	// 	Term:     rf.currentTerm,
+	// 	LeaderId: rf.me,
+	// }
+	// rf.broadcastAE(args)
 	rf.doneHeartBeat = make(chan struct{})
 	go rf.runHeartBeat(rf.doneHeartBeat)
 }
@@ -367,7 +367,7 @@ func (rf *Raft) runHeartBeat(done chan struct{}) {
 			Term:     rf.CurrentTerm(),
 			LeaderId: rf.me,
 		}
-		rf.handleAppendEntryReplies(args, rf.broadcastAE(args))
-		time.Sleep(rf.ElectionTimeout() / 10)
+		rf.broadcastAE(args)
+		time.Sleep(rf.ElectionTimeout()/10)
 	}
 }

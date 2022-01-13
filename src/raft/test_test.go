@@ -96,6 +96,7 @@ func TestReElection2A(t *testing.T) {
 	cfg.PrintAllServer()
 
 	cfg.end()
+	cfg.PrintAllServer()
 }
 
 func TestBasicAgree2B(t *testing.T) {
