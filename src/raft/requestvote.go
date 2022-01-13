@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"sync"
 	"time"
 )
 
@@ -93,36 +94,32 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
-func (rf *Raft) broadcastRV(args *RequestVoteArgs) []RequestVoteReply {
-	resp := make([]RequestVoteReply, 0)
+func (rf *Raft) broadcastRV(args *RequestVoteArgs) chan RequestVoteReply {
+	start := time.Now()
 	// TODO current
+	ch := make(chan RequestVoteReply)
+	var wg sync.WaitGroup
+	wg.Add(len(rf.peers) - 1)
 	for idx, _ := range rf.peers {
 		if idx == rf.me {
 			continue
 		}
-		reply := RequestVoteReply{}
-		// TODO always fail
-		ok := rf.sendRequestVote(idx, args, &reply)
-		if !ok {
-			continue
-		}
-		resp = append(resp, reply)
-	}
-	return resp
-}
-
-func (rf *Raft) handleRequestVoteReplies(args *RequestVoteArgs, resp []RequestVoteReply) bool {
-	// rf.DPrintf("handleRequestVoteReplies, resp: %+v, term: %d, role: %s", resp, rf.CurrentTerm(), rf.Role())
-	cnt, n := 1, len(rf.peers)
-	for _, r := range resp {
-		if args.Term != r.Term {
-			return false
-		} else {
-			if r.VoteGranted {
-				cnt++
+		go func(server int) {
+			defer wg.Done()
+			reply := RequestVoteReply{}
+			// TODO always fail
+			ok := rf.sendRequestVote(server, args, &reply)
+			if !ok {
+				return
 			}
-		}
-	}
+			ch <- reply
+		}(idx)
 
-	return cnt >= n/2+n%2
+	}
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+	rf.DPrintf("broadcastRV, elapsed: %s, args.Term: %d, myTerm: %d, myRole: %s", time.Since(start), args.Term, rf.CurrentTerm(), rf.Role())
+	return ch
 }
