@@ -7,7 +7,7 @@ import (
 )
 
 // Debugging
-const Debug = 1
+const Debug = 0
 
 func init() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
@@ -26,5 +26,5 @@ func randDuration(start, end time.Duration) time.Duration {
 }
 
 func randomElectionTimeout() time.Duration {
-	return randDuration(500*time.Millisecond, 800*time.Millisecond)
+	return randDuration(300*time.Millisecond, 500*time.Millisecond)
 }

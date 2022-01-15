@@ -11,12 +11,8 @@ type AppendEntriesArgs struct {
 	// TODO log field
 }
 
-//
-// example RequestVote RPC reply structure.
-// field names must start with capital letters!
-//
+
 type AppendEntriesReply struct {
-	// Your data here (2A).
 	Term    int
 	Success bool
 }
@@ -28,7 +24,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.Term < rf.currentTerm {
 		reply.Term = args.Term
 		reply.Success = false
-		rf.DPrintf("AppendEntries false from %d with term: %d, role: %s", args.LeaderId, args.Term, rf.role)
 		return
 	}
 	if args.Term > rf.currentTerm {
@@ -42,7 +37,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	reply.Term = args.Term
 	reply.Success = true
-	rf.DPrintf("AppendEntries success from %d with term: %d, role: %s", args.LeaderId, args.Term, rf.role)
 	return
 }
 
@@ -62,16 +56,11 @@ func (rf *Raft) broadcastAE(args *AppendEntriesArgs) {
 			if !ok {
 				return
 			}
-			// if rf.CurrentTerm() < reply.Term {
-			// 	rf.DPrintf("invalid reply: %+v, toFollower", reply)
-			// 	rf.toFollower(reply.Term)
-			// }
 		}(idx)
 	}
 }
 
 func (rf *Raft) handleAppendEntryReplies(args *AppendEntriesArgs, resp []AppendEntriesReply) {
-	// rf.DPrintf("handleAppendEntryReplies, resp: %+v, term: %d, role: %s", resp, rf.CurrentTerm(), rf.Role())
 	for _, r := range resp {
 		if rf.CurrentTerm() < r.Term {
 			rf.DPrintf("leader received bigger term")

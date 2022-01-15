@@ -71,10 +71,7 @@ type Raft struct {
 	currentTerm, votedFor int
 	role                  ServerRole
 
-	// eventElection chan struct{}
 	doneHeartBeat chan struct{}
-	// becomeLeader   chan int
-	// becomeFollower chan int
 
 	debugMu sync.Mutex
 
@@ -254,11 +251,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.role = Follower
 	rf.votedFor = -1
 
-	// rf.eventElection = make(chan struct{})
-	// rf.becomeLeader = make(chan int)
-	// rf.becomeLeader = make(chan int)
-	// go rf.eventLoop()
-	// go rf.electionLoop()
 	go rf.checkElectionTimeout()
 
 	return rf
@@ -279,21 +271,11 @@ func (rf *Raft) checkElectionTimeout() {
 		if !to {
 			continue
 		}
-		rf.DPrintf("start runElection, since: %s, eto: %s,  myTerm: %d", since, eto, rf.currentTerm)
 		rf.SetRefreshTime(time.Now())
 		rf.SetElectionTimeout(randomElectionTimeout())
 		rf.runElection()
 	}
 }
-
-// func (rf *Raft) electionLoop() {
-// 	for {
-// 		select {
-// 		case <-rf.eventElection:
-//
-// 		}
-// 	}
-// }
 
 func (rf *Raft) runElection() {
 	rf.mu.Lock()
@@ -306,7 +288,6 @@ func (rf *Raft) runElection() {
 	}
 	rf.mu.Unlock()
 
-	// TODO 网络延迟可能会很大
 	ch := rf.broadcastRV(args)
 	cnt, n := 1, len(rf.peers)
 	for {
@@ -323,7 +304,6 @@ func (rf *Raft) runElection() {
 			}
 
 			if cnt >= n/2+n%2 && rf.Role() == Candidate {
-				rf.DPrintf("selected as leader, args: %+v", args)
 				rf.toLeader()
 				return
 			}
@@ -336,11 +316,6 @@ func (rf *Raft) toLeader() {
 	rf.mu.Lock()
 	rf.role = Leader
 	rf.mu.Unlock()
-	// args := &AppendEntriesArgs{
-	// 	Term:     rf.currentTerm,
-	// 	LeaderId: rf.me,
-	// }
-	// rf.broadcastAE(args)
 	rf.doneHeartBeat = make(chan struct{})
 	go rf.runHeartBeat(rf.doneHeartBeat)
 }
