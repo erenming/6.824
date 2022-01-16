@@ -7,7 +7,7 @@ import (
 )
 
 // Debugging
-const Debug = 0
+const Debug = 1
 
 func init() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)

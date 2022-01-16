@@ -53,6 +53,11 @@ const (
 	Follower  ServerRole = "FOLLOWER"
 )
 
+type LogEntry struct {
+	Command interface{}
+	Term    int
+}
+
 //
 // A Go object implementing a single Raft peer.
 //
@@ -70,12 +75,30 @@ type Raft struct {
 	electionTimeout       time.Duration
 	currentTerm, votedFor int
 	role                  ServerRole
+	doneHeartBeat         chan struct{}
+	logs                  []LogEntry // start from index=1, ignore logs[0]
 
-	doneHeartBeat chan struct{}
+	// replicate related
+	lastApplied int
+	nextIndex   []int
+	// commit related
+	commitIndex int
+	matchIndex  []int
 
 	debugMu sync.Mutex
+	applyCh chan ApplyMsg
+}
 
-	cntdebug int
+func (rf *Raft) LastApplied() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.lastApplied
+}
+
+func (rf *Raft) SetLastApplied(lastApplied int) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.lastApplied = lastApplied
 }
 
 func (rf *Raft) CurrentTerm() int {
@@ -173,30 +196,6 @@ func (rf *Raft) readPersist(data []byte) {
 }
 
 //
-// the service using Raft (e.g. a k/v server) wants to start
-// agreement on the next command to be appended to Raft's log. if this
-// server isn't the leader, returns false. otherwise start the
-// agreement and return immediately. there is no guarantee that this
-// command will ever be committed to the Raft log, since the leader
-// may fail or lose an election. even if the Raft instance has been killed,
-// this function should return gracefully.
-//
-// the first return value is the index that the command will appear at
-// if it's ever committed. the second return value is the current
-// term. the third return value is true if this server believes it is
-// the leader.
-//
-func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
-
-	// Your code here (2B).
-
-	return index, term, isLeader
-}
-
-//
 // the tester doesn't halt goroutines created by Raft after each test,
 // but it does call the Kill() method. your code can use killed() to
 // check whether Kill() has been called. the use of atomic avoids the
@@ -251,9 +250,16 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.role = Follower
 	rf.votedFor = -1
 
+	rf.logs = make([]LogEntry, 1)
+	rf.applyCh = applyCh
+
 	go rf.checkElectionTimeout()
 
 	return rf
+}
+
+func (rf *Raft) updateStateMachine(msg ApplyMsg) {
+	rf.applyCh <- msg
 }
 
 func (rf *Raft) checkElectionTimeout() {
@@ -277,52 +283,29 @@ func (rf *Raft) checkElectionTimeout() {
 	}
 }
 
-func (rf *Raft) runElection() {
-	rf.mu.Lock()
-	rf.role = Candidate
-	rf.currentTerm++
-	rf.votedFor = rf.me
-	args := &RequestVoteArgs{
-		Term:        rf.currentTerm,
-		CandidateID: rf.me,
-	}
-	rf.mu.Unlock()
-
-	ch := rf.broadcastRV(args)
-	cnt, n := 1, len(rf.peers)
-	for {
-		select {
-		case <-time.After(rf.ElectionTimeout()):
-			return
-		case reply := <-ch:
-			if args.Term != reply.Term || rf.CurrentTerm() != reply.Term {
-				continue
-			}
-
-			if reply.VoteGranted {
-				cnt++
-			}
-
-			if cnt >= n/2+n%2 && rf.Role() == Candidate {
-				rf.toLeader()
-				return
-			}
-		}
-	}
-
-}
-
 func (rf *Raft) toLeader() {
 	rf.mu.Lock()
 	rf.role = Leader
-	rf.mu.Unlock()
+	// init nextIndex[]
+	nextIndex := make([]int, len(rf.peers))
+	for i := 0; i < len(rf.peers); i++ {
+		nextIndex[i] = rf.lastApplied + 1
+	}
+	rf.nextIndex = nextIndex
+	// init matchIndex[]
+	matchIndex := make([]int, len(rf.peers))
+	for i := 0; i < len(rf.peers); i++ {
+		matchIndex[i] = 0
+	}
+	rf.matchIndex = matchIndex
 	rf.doneHeartBeat = make(chan struct{})
+	rf.mu.Unlock()
 	go rf.runHeartBeat(rf.doneHeartBeat)
 }
 
 func (rf *Raft) toFollower(term int) {
-	close(rf.doneHeartBeat)
 	rf.mu.Lock()
+	close(rf.doneHeartBeat)
 	rf.currentTerm = term
 	rf.role = Follower
 	rf.electionTimeout = randomElectionTimeout()
@@ -337,12 +320,7 @@ func (rf *Raft) runHeartBeat(done chan struct{}) {
 			return
 		default:
 		}
-
-		args := &AppendEntriesArgs{
-			Term:     rf.CurrentTerm(),
-			LeaderId: rf.me,
-		}
-		rf.broadcastAE(args)
-		time.Sleep(rf.ElectionTimeout()/10)
+		rf.broadcastAE()
+		time.Sleep(rf.ElectionTimeout() / 10)
 	}
 }
