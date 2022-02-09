@@ -19,23 +19,22 @@ import (
 // the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	if rf.Role() != Leader {
+	if rf.Role() != LEADER {
 		return -1, -1, false
 	}
 
 	// 1. apply
 	rf.mu.Lock()
-	rf.logs = append(rf.logs, LogEntry{
+	le := LogEntry{
+		Index:   len(rf.logs),
 		Command: command,
 		Term:    rf.currentTerm,
-	})
+	}
+	rf.logs = append(rf.logs, le)
 	rf.mu.Unlock()
 
 	// 2. replica logEntry to followers
-	ch := rf.replica(LogEntry{
-		Command: command,
-		Term:    rf.CurrentTerm(),
-	})
+	ch := rf.replica()
 
 	// 2. handle Request&Response
 	cnt, n := 1, len(rf.peers)
@@ -65,7 +64,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 }
 
 // 信号通道：一旦有server复制成功则发送一个信号
-func (rf *Raft) replica(le LogEntry) chan struct{} {
+func (rf *Raft) replica() chan struct{} {
 	ch := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(len(rf.peers) - 1)
@@ -75,16 +74,19 @@ func (rf *Raft) replica(le LogEntry) chan struct{} {
 		}
 		go func(server int) {
 			defer wg.Done()
+		redo:
 			rf.mu.Lock()
 			logs := rf.logs[rf.nextIndex[server]:]
+			prevLog := rf.logs[rf.nextIndex[server]-1]
 			args := &AppendEntriesArgs{
 				Term:         rf.currentTerm,
 				LeaderId:     rf.me,
 				LeaderCommit: rf.commitIndex,
 				Entries:      logs,
+				PrevLogIndex: prevLog.Index,
+				PrevLogTerm:  prevLog.Term,
 			}
 			rf.mu.Unlock()
-		redo:
 			reply := AppendEntriesReply{}
 			ok := rf.sendAppendEntries(server, args, &reply)
 			if !ok {

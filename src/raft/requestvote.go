@@ -27,7 +27,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
-		rf.role = Follower
+		rf.role = FOLLOWER
 		rf.votedFor = -1
 	}
 
@@ -50,7 +50,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 
 func (rf *Raft) runElection() {
 	rf.mu.Lock()
-	rf.role = Candidate
+	rf.role = CANDIDATE
 	rf.currentTerm++
 	rf.votedFor = rf.me
 	args := &RequestVoteArgs{
@@ -74,7 +74,7 @@ func (rf *Raft) runElection() {
 				cnt++
 			}
 
-			if cnt >= n/2+n%2 && rf.Role() == Candidate {
+			if cnt >= n/2+n%2 && rf.Role() == CANDIDATE {
 				rf.toLeader()
 				return
 			}

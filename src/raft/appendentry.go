@@ -29,26 +29,33 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
 	}
-	if rf.role != Follower && rf.doneHeartBeat != nil {
+	if rf.role != FOLLOWER && rf.doneHeartBeat != nil {
 		close(rf.doneHeartBeat)
 	}
-	rf.role = Follower
+	rf.role = FOLLOWER
 	rf.refreshTime = time.Now()
 
-	rf.DPrintf("args: %+v, commitIndex: %d", args, rf.commitIndex)
 	if len(args.Entries) > 0 {
+		prevLog := rf.logs[len(rf.logs)-1]
+		if prevLog.Term != args.PrevLogTerm || prevLog.Index != args.PrevLogIndex {
+			reply.Term = args.Term
+			reply.Success = false
+			return
+		}
+		rf.DPrintf("append entries, args: %+v", args)
 		rf.logs = append(rf.logs, args.Entries...)
+		rf.lastApplied = len(rf.logs)-1
 	}
+
 	if args.LeaderCommit > rf.commitIndex {
-		rf.commitIndex = args.LeaderCommit
-		for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
+		for i := rf.commitIndex + 1; i <= rf.lastApplied; i++ {
 			rf.updateStateMachine(ApplyMsg{
 				CommandValid: true,
 				Command:      rf.logs[i].Command,
 				CommandIndex: i,
 			})
 		}
-		rf.lastApplied = rf.commitIndex
+		rf.commitIndex = rf.lastApplied
 	}
 	reply.Term = args.Term
 	reply.Success = true
@@ -56,8 +63,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
-	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
-	return ok
+	return rf.peers[server].Call("Raft.AppendEntries", args, reply)
 }
 
 func (rf *Raft) broadcastAE() {

@@ -48,14 +48,19 @@ type ApplyMsg struct {
 type ServerRole string
 
 const (
-	Leader    ServerRole = "LEADER"
-	Candidate ServerRole = "CANDIDATE"
-	Follower  ServerRole = "FOLLOWER"
+	LEADER    ServerRole = "LEADER"
+	CANDIDATE ServerRole = "CANDIDATE"
+	FOLLOWER  ServerRole = "FOLLOWER"
 )
 
 type LogEntry struct {
+	Index   int
 	Command interface{}
 	Term    int
+}
+
+func (le LogEntry) Equal(other LogEntry) bool {
+	return le.Term == other.Term && le.Index == other.Index
 }
 
 //
@@ -154,7 +159,7 @@ func (rf *Raft) SetRole(role ServerRole) {
 func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	return rf.currentTerm, rf.role == Leader
+	return rf.currentTerm, rf.role == LEADER
 }
 
 //
@@ -247,7 +252,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.electionTimeout = randomElectionTimeout()
 	rf.refreshTime = time.Now()
 
-	rf.role = Follower
+	rf.role = FOLLOWER
 	rf.votedFor = -1
 
 	rf.logs = make([]LogEntry, 1)
@@ -265,7 +270,7 @@ func (rf *Raft) updateStateMachine(msg ApplyMsg) {
 func (rf *Raft) checkElectionTimeout() {
 	for {
 		time.Sleep(5 * time.Millisecond)
-		if rf.Role() == Leader {
+		if rf.Role() == LEADER {
 			continue
 		}
 
@@ -285,7 +290,7 @@ func (rf *Raft) checkElectionTimeout() {
 
 func (rf *Raft) toLeader() {
 	rf.mu.Lock()
-	rf.role = Leader
+	rf.role = LEADER
 	// init nextIndex[]
 	nextIndex := make([]int, len(rf.peers))
 	for i := 0; i < len(rf.peers); i++ {
@@ -307,7 +312,7 @@ func (rf *Raft) toFollower(term int) {
 	rf.mu.Lock()
 	close(rf.doneHeartBeat)
 	rf.currentTerm = term
-	rf.role = Follower
+	rf.role = FOLLOWER
 	rf.electionTimeout = randomElectionTimeout()
 	rf.refreshTime = time.Now()
 	rf.mu.Unlock()
