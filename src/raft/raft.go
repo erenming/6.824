@@ -18,6 +18,7 @@ package raft
 //
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -81,6 +82,9 @@ type Raft struct {
 	currentTerm, votedFor int
 	role                  ServerRole
 	doneHeartBeat         chan struct{}
+	toFollowerCh          chan int
+	toCandidateCh         chan struct{}
+	toLeaderCh            chan struct{}
 	logs                  []LogEntry // start from index=1, ignore logs[0]
 
 	// replicate related
@@ -258,6 +262,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.logs = make([]LogEntry, 1)
 	rf.applyCh = applyCh
 
+	rf.toFollowerCh = make(chan int)
+	rf.toCandidateCh = make(chan struct{})
+	rf.toLeaderCh = make(chan struct{})
+	ctx, _ := context.WithCancel(context.Background())
+	go rf.eventLoop(ctx)
 	go rf.checkElectionTimeout()
 
 	return rf
@@ -275,16 +284,91 @@ func (rf *Raft) checkElectionTimeout() {
 		}
 
 		rf.mu.Lock()
-		since := time.Since(rf.refreshTime)
-		eto := rf.electionTimeout
-		to := since > eto
+		to := time.Since(rf.refreshTime) > rf.electionTimeout
 		rf.mu.Unlock()
 		if !to {
 			continue
 		}
-		rf.SetRefreshTime(time.Now())
-		rf.SetElectionTimeout(randomElectionTimeout())
-		rf.runElection()
+		rf.toCandidateCh <- struct{}{}
+	}
+}
+
+func (rf *Raft) eventLoop(ctx context.Context) {
+	go rf.handleToFollower(ctx)
+	go rf.handleToCandidate(ctx)
+	go rf.handleToLeader(ctx)
+}
+
+func (rf *Raft) handleToFollower(ctx context.Context) {
+	for {
+		select {
+		case term := <-rf.toFollowerCh:
+			switch rf.Role() {
+			case FOLLOWER:
+				// impossible, then pass
+			case CANDIDATE:
+				// discover current leader or new term
+				rf.mu.Lock()
+				rf.role = FOLLOWER
+				rf.currentTerm = term
+				rf.mu.Unlock()
+			case LEADER:
+				// discover server with higher term
+				rf.mu.Lock()
+				rf.role = FOLLOWER
+				rf.currentTerm = term
+				rf.mu.Unlock()
+				close(rf.doneHeartBeat)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (rf *Raft) handleToCandidate(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-rf.toCandidateCh:
+			switch rf.Role() {
+			case FOLLOWER:
+				// timeout, start election
+				rf.SetRefreshTime(time.Now())
+				rf.SetElectionTimeout(randomElectionTimeout())
+				rf.runElection()
+				// TODO election
+			case CANDIDATE:
+				// timeout, new election
+				rf.SetRefreshTime(time.Now())
+				rf.SetElectionTimeout(randomElectionTimeout())
+				rf.runElection()
+				// TODO election
+			case LEADER:
+				// impossible, then pass
+			}
+		}
+	}
+}
+
+func (rf *Raft) handleToLeader(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-rf.toLeaderCh:
+			switch rf.Role() {
+			case LEADER, FOLLOWER:
+				// impossible, then pass
+			case CANDIDATE:
+				// receiver votes from majority servers
+				rf.role = LEADER
+				doneHB := make(chan struct{})
+				rf.doneHeartBeat = doneHB
+				go rf.runHeartBeat()
+			}
+		}
 	}
 }
 
@@ -305,7 +389,7 @@ func (rf *Raft) toLeader() {
 	rf.matchIndex = matchIndex
 	rf.doneHeartBeat = make(chan struct{})
 	rf.mu.Unlock()
-	go rf.runHeartBeat(rf.doneHeartBeat)
+	go rf.runHeartBeat()
 }
 
 func (rf *Raft) toFollower(term int) {
@@ -318,14 +402,14 @@ func (rf *Raft) toFollower(term int) {
 	rf.mu.Unlock()
 }
 
-func (rf *Raft) runHeartBeat(done chan struct{}) {
+func (rf *Raft) runHeartBeat() {
 	for {
-		select {
-		case <-done:
-			return
-		default:
-		}
 		rf.broadcastAE()
-		time.Sleep(rf.ElectionTimeout() / 10)
+
+		select {
+		case <-rf.doneHeartBeat:
+			return
+		case <-time.After(rf.ElectionTimeout() / 10):
+		}
 	}
 }
