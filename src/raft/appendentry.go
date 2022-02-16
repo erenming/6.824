@@ -19,6 +19,10 @@ type AppendEntriesReply struct {
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	// Your code here (2A, 2B).
+	if rf.Role() != FOLLOWER {
+		rf.toFollowerCh <- args.Term
+	}
+
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if args.Term < rf.currentTerm {
@@ -29,10 +33,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
 	}
-	if rf.role != FOLLOWER && rf.doneHeartBeat != nil {
-		close(rf.doneHeartBeat)
-	}
-	rf.role = FOLLOWER
+	// rf.role = FOLLOWER
 	rf.refreshTime = time.Now()
 
 	if len(args.Entries) > 0 {
@@ -44,7 +45,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 		rf.DPrintf("append entries, args: %+v", args)
 		rf.logs = append(rf.logs, args.Entries...)
-		rf.lastApplied = len(rf.logs)-1
+		rf.lastApplied = len(rf.logs) - 1
 	}
 
 	if args.LeaderCommit > rf.commitIndex {

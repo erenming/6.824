@@ -77,15 +77,19 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-	refreshTime           time.Time
-	electionTimeout       time.Duration
+	refreshTime     time.Time
+	electionTimeout time.Duration
+
 	currentTerm, votedFor int
 	role                  ServerRole
-	doneHeartBeat         chan struct{}
-	toFollowerCh          chan int
-	toCandidateCh         chan struct{}
-	toLeaderCh            chan struct{}
-	logs                  []LogEntry // start from index=1, ignore logs[0]
+
+	doneHeartBeat chan struct{}
+	toFollowerCh  chan int
+	toCandidateCh chan struct{}
+	toLeaderCh    chan struct{}
+	cancelFunc    context.CancelFunc
+
+	logs []LogEntry // start from index=1, ignore logs[0]
 
 	// replicate related
 	lastApplied int
@@ -218,6 +222,7 @@ func (rf *Raft) readPersist(data []byte) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
+	rf.cancelFunc()
 }
 
 func (rf *Raft) killed() bool {
@@ -265,8 +270,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.toFollowerCh = make(chan int)
 	rf.toCandidateCh = make(chan struct{})
 	rf.toLeaderCh = make(chan struct{})
-	ctx, _ := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	rf.cancelFunc = cancel
 	go rf.eventLoop(ctx)
+
 	go rf.checkElectionTimeout()
 
 	return rf
@@ -279,6 +286,9 @@ func (rf *Raft) updateStateMachine(msg ApplyMsg) {
 func (rf *Raft) checkElectionTimeout() {
 	for {
 		time.Sleep(5 * time.Millisecond)
+		if rf.killed() {
+			break
+		}
 		if rf.Role() == LEADER {
 			continue
 		}
@@ -309,14 +319,20 @@ func (rf *Raft) handleToFollower(ctx context.Context) {
 			case CANDIDATE:
 				// discover current leader or new term
 				rf.mu.Lock()
-				rf.role = FOLLOWER
 				rf.currentTerm = term
+				rf.role = FOLLOWER
+				rf.electionTimeout = randomElectionTimeout()
+				rf.refreshTime = time.Now()
+				rf.votedFor = -1
 				rf.mu.Unlock()
 			case LEADER:
 				// discover server with higher term
 				rf.mu.Lock()
-				rf.role = FOLLOWER
 				rf.currentTerm = term
+				rf.role = FOLLOWER
+				rf.electionTimeout = randomElectionTimeout()
+				rf.refreshTime = time.Now()
+				rf.votedFor = -1
 				rf.mu.Unlock()
 				close(rf.doneHeartBeat)
 			}
@@ -338,7 +354,6 @@ func (rf *Raft) handleToCandidate(ctx context.Context) {
 				rf.SetRefreshTime(time.Now())
 				rf.SetElectionTimeout(randomElectionTimeout())
 				rf.runElection()
-				// TODO election
 			case CANDIDATE:
 				// timeout, new election
 				rf.SetRefreshTime(time.Now())
@@ -363,43 +378,26 @@ func (rf *Raft) handleToLeader(ctx context.Context) {
 				// impossible, then pass
 			case CANDIDATE:
 				// receiver votes from majority servers
+				rf.mu.Lock()
 				rf.role = LEADER
-				doneHB := make(chan struct{})
-				rf.doneHeartBeat = doneHB
+				// init nextIndex[]
+				nextIndex := make([]int, len(rf.peers))
+				for i := 0; i < len(rf.peers); i++ {
+					nextIndex[i] = rf.lastApplied + 1
+				}
+				rf.nextIndex = nextIndex
+				// init matchIndex[]
+				matchIndex := make([]int, len(rf.peers))
+				for i := 0; i < len(rf.peers); i++ {
+					matchIndex[i] = 0
+				}
+				rf.matchIndex = matchIndex
+				rf.doneHeartBeat = make(chan struct{})
+				rf.mu.Unlock()
 				go rf.runHeartBeat()
 			}
 		}
 	}
-}
-
-func (rf *Raft) toLeader() {
-	rf.mu.Lock()
-	rf.role = LEADER
-	// init nextIndex[]
-	nextIndex := make([]int, len(rf.peers))
-	for i := 0; i < len(rf.peers); i++ {
-		nextIndex[i] = rf.lastApplied + 1
-	}
-	rf.nextIndex = nextIndex
-	// init matchIndex[]
-	matchIndex := make([]int, len(rf.peers))
-	for i := 0; i < len(rf.peers); i++ {
-		matchIndex[i] = 0
-	}
-	rf.matchIndex = matchIndex
-	rf.doneHeartBeat = make(chan struct{})
-	rf.mu.Unlock()
-	go rf.runHeartBeat()
-}
-
-func (rf *Raft) toFollower(term int) {
-	rf.mu.Lock()
-	close(rf.doneHeartBeat)
-	rf.currentTerm = term
-	rf.role = FOLLOWER
-	rf.electionTimeout = randomElectionTimeout()
-	rf.refreshTime = time.Now()
-	rf.mu.Unlock()
 }
 
 func (rf *Raft) runHeartBeat() {

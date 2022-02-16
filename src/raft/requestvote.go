@@ -18,17 +18,19 @@ type RequestVoteReply struct {
 }
 
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+	if args.Term > rf.CurrentTerm() {
+		// rf.currentTerm = args.Term
+		// rf.role = FOLLOWER
+		// rf.votedFor = -1
+		rf.toFollowerCh <- args.Term
+	}
+
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
 		return
-	}
-	if args.Term > rf.currentTerm {
-		rf.currentTerm = args.Term
-		rf.role = FOLLOWER
-		rf.votedFor = -1
 	}
 
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateID {
@@ -75,7 +77,8 @@ func (rf *Raft) runElection() {
 			}
 
 			if cnt >= n/2+n%2 && rf.Role() == CANDIDATE {
-				rf.toLeader()
+				// rf.toLeader()
+				rf.toLeaderCh <- struct{}{}
 				return
 			}
 		}
