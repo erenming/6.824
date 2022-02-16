@@ -39,6 +39,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// 2. handle Request&Response
 	cnt, n := 1, len(rf.peers)
 	for {
+		if rf.Role() != LEADER {
+			return -1, -1, false
+		}
 		select {
 		case _, ok := <-ch:
 			if !ok {
@@ -57,8 +60,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 				rf.mu.Unlock()
 				return rf.LastApplied(), rf.CurrentTerm(), true
 			}
-			// case <-rf.doneHeartBeat: // TODO leader done
-			// 	return -1, -1, false
 		}
 	}
 }
@@ -94,7 +95,7 @@ func (rf *Raft) replica() chan struct{} {
 			}
 			if reply.Success {
 				rf.mu.Lock()
-				rf.nextIndex[server]++
+				rf.nextIndex[server] += len(logs)
 				rf.mu.Unlock()
 				ch <- struct{}{}
 			}

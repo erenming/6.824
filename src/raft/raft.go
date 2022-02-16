@@ -102,6 +102,12 @@ type Raft struct {
 	applyCh chan ApplyMsg
 }
 
+func (rf *Raft) NextIndex() []int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.nextIndex
+}
+
 func (rf *Raft) LastApplied() int {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -377,27 +383,37 @@ func (rf *Raft) handleToLeader(ctx context.Context) {
 			case LEADER, FOLLOWER:
 				// impossible, then pass
 			case CANDIDATE:
-				// receiver votes from majority servers
 				rf.mu.Lock()
 				rf.role = LEADER
-				// init nextIndex[]
-				nextIndex := make([]int, len(rf.peers))
-				for i := 0; i < len(rf.peers); i++ {
-					nextIndex[i] = rf.lastApplied + 1
-				}
-				rf.nextIndex = nextIndex
-				// init matchIndex[]
-				matchIndex := make([]int, len(rf.peers))
-				for i := 0; i < len(rf.peers); i++ {
-					matchIndex[i] = 0
-				}
-				rf.matchIndex = matchIndex
-				rf.doneHeartBeat = make(chan struct{})
 				rf.mu.Unlock()
+
+				rf.initNextIndex()
+				rf.initMatchIndex()
+				rf.doneHeartBeat = make(chan struct{})
 				go rf.runHeartBeat()
 			}
 		}
 	}
+}
+
+func (rf *Raft) initNextIndex() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	nextIndex := make([]int, len(rf.peers))
+	for i := 0; i < len(rf.peers); i++ {
+		nextIndex[i] = rf.lastApplied + 1
+	}
+	rf.nextIndex = nextIndex
+}
+
+func (rf *Raft) initMatchIndex() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	matchIndex := make([]int, len(rf.peers))
+	for i := 0; i < len(rf.peers); i++ {
+		matchIndex[i] = 0
+	}
+	rf.matchIndex = matchIndex
 }
 
 func (rf *Raft) runHeartBeat() {

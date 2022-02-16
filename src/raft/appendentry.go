@@ -43,7 +43,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			reply.Success = false
 			return
 		}
-		rf.DPrintf("append entries, args: %+v", args)
 		rf.logs = append(rf.logs, args.Entries...)
 		rf.lastApplied = len(rf.logs) - 1
 	}
@@ -74,15 +73,10 @@ func (rf *Raft) broadcastAE() {
 		}
 		go func(server int) {
 			rf.mu.Lock()
-			logs := []LogEntry{}
-			if rf.lastApplied >= rf.nextIndex[server] {
-				logs = rf.logs[rf.nextIndex[server]:]
-			}
 			args := &AppendEntriesArgs{
 				Term:         rf.currentTerm,
 				LeaderId:     rf.me,
 				LeaderCommit: rf.commitIndex,
-				Entries:      logs,
 			}
 			rf.mu.Unlock()
 
@@ -93,7 +87,7 @@ func (rf *Raft) broadcastAE() {
 			}
 			if reply.Success {
 				rf.mu.Lock()
-				rf.nextIndex[server] = len(rf.logs)
+				// rf.nextIndex[server] = len(rf.logs)
 				rf.matchIndex[server] = rf.nextIndex[server] - 1
 				rf.mu.Unlock()
 			}
