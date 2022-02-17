@@ -2,6 +2,7 @@ package raft
 
 import (
 	"sync"
+	"time"
 )
 
 //
@@ -31,6 +32,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Term:    rf.currentTerm,
 	}
 	rf.logs = append(rf.logs, le)
+	rf.lastApplied++
 	rf.mu.Unlock()
 
 	// 2. replica logEntry to followers
@@ -42,16 +44,17 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		if rf.Role() != LEADER {
 			return -1, -1, false
 		}
+
 		select {
 		case _, ok := <-ch:
 			if !ok {
-				return -1, -1, false
+				return rf.LastApplied(), rf.CurrentTerm(), true
 			}
+
 			cnt++
 			if cnt >= n/2+n%2 { // majority
 				rf.mu.Lock()
 				rf.commitIndex++
-				rf.lastApplied++
 				rf.updateStateMachine(ApplyMsg{
 					CommandValid: true,
 					Command:      rf.logs[rf.lastApplied].Command,
@@ -73,32 +76,19 @@ func (rf *Raft) replica() chan struct{} {
 		if idx == rf.me {
 			continue
 		}
+
 		go func(server int) {
 			defer wg.Done()
-		redo:
-			rf.mu.Lock()
-			logs := rf.logs[rf.nextIndex[server]:]
-			prevLog := rf.logs[rf.nextIndex[server]-1]
-			args := &AppendEntriesArgs{
-				Term:         rf.currentTerm,
-				LeaderId:     rf.me,
-				LeaderCommit: rf.commitIndex,
-				Entries:      logs,
-				PrevLogIndex: prevLog.Index,
-				PrevLogTerm:  prevLog.Term,
-			}
-			rf.mu.Unlock()
-			reply := AppendEntriesReply{}
-			ok := rf.sendAppendEntries(server, args, &reply)
+			ok := rf.replicaServer(server, ch)
 			if !ok {
-				goto redo
+				go func() {
+					for !rf.replicaServer(server, nil) {
+						// decrease cpu
+						time.Sleep(time.Millisecond*10)
+					}
+				}()
 			}
-			if reply.Success {
-				rf.mu.Lock()
-				rf.nextIndex[server] += len(logs)
-				rf.mu.Unlock()
-				ch <- struct{}{}
-			}
+
 		}(idx)
 	}
 	go func() {
@@ -106,4 +96,34 @@ func (rf *Raft) replica() chan struct{} {
 		close(ch)
 	}()
 	return ch
+}
+
+func (rf *Raft) replicaServer(svrID int, echoCh chan struct{}) bool {
+	rf.mu.Lock()
+	logs := rf.logs[rf.nextIndex[svrID]:]
+	prevLog := rf.logs[rf.nextIndex[svrID]-1]
+	args := &AppendEntriesArgs{
+		Term:         rf.currentTerm,
+		LeaderId:     rf.me,
+		LeaderCommit: rf.commitIndex,
+		Entries:      logs,
+		PrevLogIndex: prevLog.Index,
+		PrevLogTerm:  prevLog.Term,
+	}
+	rf.mu.Unlock()
+	reply := AppendEntriesReply{}
+	ok := rf.sendAppendEntries(svrID, args, &reply)
+	if !ok {
+		return false
+	}
+
+	if reply.Success {
+		rf.mu.Lock()
+		rf.nextIndex[svrID] += len(logs)
+		rf.mu.Unlock()
+		if echoCh != nil {
+			echoCh <- struct{}{}
+		}
+	}
+	return true
 }
