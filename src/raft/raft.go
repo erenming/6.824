@@ -339,8 +339,8 @@ func (rf *Raft) handleToFollower(ctx context.Context) {
 				rf.electionTimeout = randomElectionTimeout()
 				rf.refreshTime = time.Now()
 				rf.votedFor = -1
-				rf.mu.Unlock()
 				close(rf.doneHeartBeat)
+				rf.mu.Unlock()
 			}
 		case <-ctx.Done():
 			return
@@ -385,11 +385,11 @@ func (rf *Raft) handleToLeader(ctx context.Context) {
 			case CANDIDATE:
 				rf.mu.Lock()
 				rf.role = LEADER
+				rf.doneHeartBeat = make(chan struct{})
 				rf.mu.Unlock()
 
 				rf.initNextIndex()
 				rf.initMatchIndex()
-				rf.doneHeartBeat = make(chan struct{})
 				go rf.runHeartBeat()
 			}
 		}

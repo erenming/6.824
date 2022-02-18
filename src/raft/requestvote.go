@@ -7,9 +7,9 @@ import (
 
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
-	Term        int
-	CandidateID int
-	// lastLogTerm, lastLogIndex int
+	Term                      int
+	CandidateID               int
+	LastLogTerm, LastLogIndex int
 }
 
 type RequestVoteReply struct {
@@ -18,10 +18,13 @@ type RequestVoteReply struct {
 }
 
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+	if !rf.isMoreUpToDate(args) {
+		reply.Term = rf.currentTerm
+		reply.VoteGranted = false
+		return
+	}
+
 	if args.Term > rf.CurrentTerm() {
-		// rf.currentTerm = args.Term
-		// rf.role = FOLLOWER
-		// rf.votedFor = -1
 		rf.toFollowerCh <- args.Term
 	}
 
@@ -45,6 +48,15 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 }
 
+// check candidate is more up to date
+func (rf *Raft) isMoreUpToDate(args *RequestVoteArgs) bool {
+	prevLog := rf.logs[rf.lastApplied]
+	if prevLog.Term == args.LastLogTerm {
+		return prevLog.Index >= args.LastLogIndex
+	}
+	return prevLog.Term >= args.LastLogTerm
+}
+
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
@@ -55,9 +67,12 @@ func (rf *Raft) runElection() {
 	rf.role = CANDIDATE
 	rf.currentTerm++
 	rf.votedFor = rf.me
+	lastLog := rf.logs[rf.lastApplied]
 	args := &RequestVoteArgs{
-		Term:        rf.currentTerm,
-		CandidateID: rf.me,
+		Term:         rf.currentTerm,
+		CandidateID:  rf.me,
+		LastLogTerm:  lastLog.Term,
+		LastLogIndex: lastLog.Index,
 	}
 	rf.mu.Unlock()
 
@@ -77,7 +92,6 @@ func (rf *Raft) runElection() {
 			}
 
 			if cnt >= n/2+n%2 && rf.Role() == CANDIDATE {
-				// rf.toLeader()
 				rf.toLeaderCh <- struct{}{}
 				return
 			}

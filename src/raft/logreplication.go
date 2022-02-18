@@ -81,10 +81,11 @@ func (rf *Raft) replica() chan struct{} {
 			defer wg.Done()
 			ok := rf.replicaServer(server, ch)
 			if !ok {
+				// network error, retry background forever
 				go func() {
 					for !rf.replicaServer(server, nil) {
 						// decrease cpu
-						time.Sleep(time.Millisecond*10)
+						time.Sleep(time.Millisecond * 10)
 					}
 				}()
 			}
@@ -98,10 +99,12 @@ func (rf *Raft) replica() chan struct{} {
 	return ch
 }
 
-func (rf *Raft) replicaServer(svrID int, echoCh chan struct{}) bool {
+func (rf *Raft) replicaServer(srvID int, echoCh chan struct{}) bool {
+redo:
 	rf.mu.Lock()
-	logs := rf.logs[rf.nextIndex[svrID]:]
-	prevLog := rf.logs[rf.nextIndex[svrID]-1]
+	// rf.DPrintf("leader nextIndex: %+v,  replica to server %d", rf.nextIndex, srvID)
+	logs := rf.logs[rf.nextIndex[srvID]:]
+	prevLog := rf.logs[rf.nextIndex[srvID]-1]
 	args := &AppendEntriesArgs{
 		Term:         rf.currentTerm,
 		LeaderId:     rf.me,
@@ -112,18 +115,30 @@ func (rf *Raft) replicaServer(svrID int, echoCh chan struct{}) bool {
 	}
 	rf.mu.Unlock()
 	reply := AppendEntriesReply{}
-	ok := rf.sendAppendEntries(svrID, args, &reply)
+	ok := rf.sendAppendEntries(srvID, args, &reply)
 	if !ok {
 		return false
 	}
 
+	// rf.DPrintf("reply %+v from %d", reply, srvID)
+	if reply.Term > rf.CurrentTerm() {
+		rf.toFollowerCh <- reply.Term
+		return true
+	}
+
 	if reply.Success {
 		rf.mu.Lock()
-		rf.nextIndex[svrID] += len(logs)
+		rf.nextIndex[srvID] += len(logs)
 		rf.mu.Unlock()
 		if echoCh != nil {
 			echoCh <- struct{}{}
 		}
+		return true
+	} else {
+		// handle rejected AppendRPC
+		rf.mu.Lock()
+		rf.nextIndex[srvID]--
+		rf.mu.Unlock()
+		goto redo
 	}
-	return true
 }

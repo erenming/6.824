@@ -26,23 +26,28 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if args.Term < rf.currentTerm {
-		reply.Term = args.Term
+		reply.Term = rf.currentTerm
 		reply.Success = false
 		return
 	}
-	if args.Term > rf.currentTerm {
-		rf.currentTerm = args.Term
-	}
+
+	rf.currentTerm = args.Term
 	// rf.role = FOLLOWER
 	rf.refreshTime = time.Now()
 
 	if len(args.Entries) > 0 {
-		prevLog := rf.logs[len(rf.logs)-1]
+		// TODO. check and remove inconsistency logEntry
+		n := len(rf.logs)
+		prevLog := rf.logs[args.PrevLogIndex]
 		if prevLog.Term != args.PrevLogTerm || prevLog.Index != args.PrevLogIndex {
-			reply.Term = args.Term
+			rf.logs = rf.logs[:n-1]
+			rf.lastApplied = len(rf.logs) - 1
+
+			reply.Term = rf.currentTerm
 			reply.Success = false
 			return
 		}
+
 		rf.logs = append(rf.logs, args.Entries...)
 		rf.lastApplied = len(rf.logs) - 1
 	}
@@ -85,9 +90,14 @@ func (rf *Raft) broadcastAE() {
 			if !ok {
 				return
 			}
+
+			if reply.Term > rf.CurrentTerm() {
+				rf.toFollowerCh <- reply.Term
+				return
+			}
+
 			if reply.Success {
 				rf.mu.Lock()
-				// rf.nextIndex[server] = len(rf.logs)
 				rf.matchIndex[server] = rf.nextIndex[server] - 1
 				rf.mu.Unlock()
 			}
