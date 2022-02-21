@@ -18,18 +18,19 @@ type RequestVoteReply struct {
 }
 
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	if !rf.isMoreUpToDate(args) {
-		reply.Term = rf.currentTerm
-		reply.VoteGranted = false
-		return
-	}
-
 	if args.Term > rf.CurrentTerm() {
 		rf.toFollowerCh <- args.Term
 	}
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+
+	if !rf.isMoreUpToDate(args) {
+		reply.Term = rf.currentTerm
+		reply.VoteGranted = false
+		return
+	}
+
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false

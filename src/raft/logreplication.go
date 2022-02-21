@@ -102,7 +102,7 @@ func (rf *Raft) replica() chan struct{} {
 func (rf *Raft) replicaServer(srvID int, echoCh chan struct{}) bool {
 redo:
 	rf.mu.Lock()
-	// rf.DPrintf("leader nextIndex: %+v,  replica to server %d", rf.nextIndex, srvID)
+	rf.DPrintf("leader nextIndex: %+v,  replica to server %d", rf.nextIndex, srvID)
 	logs := rf.logs[rf.nextIndex[srvID]:]
 	prevLog := rf.logs[rf.nextIndex[srvID]-1]
 	args := &AppendEntriesArgs{

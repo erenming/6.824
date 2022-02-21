@@ -32,13 +32,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	rf.currentTerm = args.Term
-	// rf.role = FOLLOWER
 	rf.refreshTime = time.Now()
 
 	if len(args.Entries) > 0 {
 		// TODO. check and remove inconsistency logEntry
 		n := len(rf.logs)
 		prevLog := rf.logs[args.PrevLogIndex]
+		rf.DPrintf("prevLog: %+v, args.PrevLogTerm: %d, args.PrevLogIndex: %d", prevLog, args.PrevLogTerm, args.PrevLogIndex)
 		if prevLog.Term != args.PrevLogTerm || prevLog.Index != args.PrevLogIndex {
 			rf.logs = rf.logs[:n-1]
 			rf.lastApplied = len(rf.logs) - 1
