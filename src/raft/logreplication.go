@@ -102,7 +102,7 @@ func (rf *Raft) replica() chan struct{} {
 func (rf *Raft) replicaServer(srvID int, echoCh chan struct{}) bool {
 redo:
 	rf.mu.Lock()
-	rf.DPrintf("leader nextIndex: %+v,  replica to server %d", rf.nextIndex, srvID)
+	// rf.DPrintf("leader nextIndex: %+v,  replica to server %d", rf.nextIndex, srvID)
 	logs := rf.logs[rf.nextIndex[srvID]:]
 	prevLog := rf.logs[rf.nextIndex[srvID]-1]
 	args := &AppendEntriesArgs{
@@ -120,7 +120,6 @@ redo:
 		return false
 	}
 
-	// rf.DPrintf("reply %+v from %d", reply, srvID)
 	if reply.Term > rf.CurrentTerm() {
 		rf.toFollowerCh <- reply.Term
 		return true
@@ -136,6 +135,7 @@ redo:
 		return true
 	} else {
 		// handle rejected AppendRPC
+		rf.DPrintf("decrease nextIndex and redo")
 		rf.mu.Lock()
 		rf.nextIndex[srvID]--
 		rf.mu.Unlock()

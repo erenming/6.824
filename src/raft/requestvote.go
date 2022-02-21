@@ -29,6 +29,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
 		return
+	} else {
+		rf.DPrintf("args: %+v is more up-to-date, prevLog: %+v", args, rf.logs[rf.lastApplied])
 	}
 
 	if args.Term < rf.currentTerm {
@@ -49,13 +51,14 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 }
 
-// check candidate is more up to date
+// check args is more update-to-date server
 func (rf *Raft) isMoreUpToDate(args *RequestVoteArgs) bool {
-	prevLog := rf.logs[rf.lastApplied]
-	if prevLog.Term == args.LastLogTerm {
-		return prevLog.Index >= args.LastLogIndex
+	prevLog := rf.logs[rf.commitIndex]
+	if args.LastLogTerm == prevLog.Term {
+		return args.LastLogIndex >= prevLog.Index
+	} else {
+		return args.LastLogTerm > prevLog.Term
 	}
-	return prevLog.Term >= args.LastLogTerm
 }
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
@@ -68,7 +71,7 @@ func (rf *Raft) runElection() {
 	rf.role = CANDIDATE
 	rf.currentTerm++
 	rf.votedFor = rf.me
-	lastLog := rf.logs[rf.lastApplied]
+	lastLog := rf.logs[rf.commitIndex]
 	args := &RequestVoteArgs{
 		Term:         rf.currentTerm,
 		CandidateID:  rf.me,

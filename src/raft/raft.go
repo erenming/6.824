@@ -273,6 +273,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.logs = make([]LogEntry, 1)
 	rf.applyCh = applyCh
 
+	rf.lastApplied = 0
+	rf.initNextIndex()
+	rf.initMatchIndex()
+
 	rf.toFollowerCh = make(chan int)
 	rf.toCandidateCh = make(chan struct{})
 	rf.toLeaderCh = make(chan struct{})
@@ -365,7 +369,6 @@ func (rf *Raft) handleToCandidate(ctx context.Context) {
 				rf.SetRefreshTime(time.Now())
 				rf.SetElectionTimeout(randomElectionTimeout())
 				rf.runElection()
-				// TODO election
 			case LEADER:
 				// impossible, then pass
 			}
@@ -383,13 +386,11 @@ func (rf *Raft) handleToLeader(ctx context.Context) {
 			case LEADER, FOLLOWER:
 				// impossible, then pass
 			case CANDIDATE:
+				rf.DPrintf("leader selected, nextIndex: %+v, term: %d", rf.NextIndex(), rf.CurrentTerm())
 				rf.mu.Lock()
 				rf.role = LEADER
 				rf.doneHeartBeat = make(chan struct{})
 				rf.mu.Unlock()
-
-				rf.initNextIndex()
-				rf.initMatchIndex()
 				go rf.runHeartBeat()
 			}
 		}

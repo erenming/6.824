@@ -37,7 +37,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if len(args.Entries) > 0 {
 		// TODO. check and remove inconsistency logEntry
 		n := len(rf.logs)
-		prevLog := rf.logs[args.PrevLogIndex]
+		prevLog := rf.logs[rf.lastApplied]
 		rf.DPrintf("prevLog: %+v, args.PrevLogTerm: %d, args.PrevLogIndex: %d", prevLog, args.PrevLogTerm, args.PrevLogIndex)
 		if prevLog.Term != args.PrevLogTerm || prevLog.Index != args.PrevLogIndex {
 			rf.logs = rf.logs[:n-1]
