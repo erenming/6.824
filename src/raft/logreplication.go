@@ -57,8 +57,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 				rf.commitIndex++
 				rf.updateStateMachine(ApplyMsg{
 					CommandValid: true,
-					Command:      rf.logs[rf.lastApplied].Command,
-					CommandIndex: rf.lastApplied,
+					Command:      rf.logs[rf.commitIndex].Command,
+					CommandIndex: rf.commitIndex,
 				})
 				rf.mu.Unlock()
 				return rf.LastApplied(), rf.CurrentTerm(), true
@@ -83,7 +83,7 @@ func (rf *Raft) replica() chan struct{} {
 			if !ok {
 				// network error, retry background forever
 				go func() {
-					for !rf.replicaServer(server, nil) {
+					for rf.Role() == LEADER && !rf.replicaServer(server, nil) {
 						// decrease cpu
 						time.Sleep(time.Millisecond * 10)
 					}
@@ -102,8 +102,11 @@ func (rf *Raft) replica() chan struct{} {
 func (rf *Raft) replicaServer(srvID int, echoCh chan struct{}) bool {
 redo:
 	rf.mu.Lock()
-	// rf.DPrintf("leader nextIndex: %+v,  replica to server %d", rf.nextIndex, srvID)
-	logs := rf.logs[rf.nextIndex[srvID]:]
+	rf.DPrintf("leader nextIndex: %+v,  replica to server %d, rf.lastApplied: %+v", rf.nextIndex, srvID, rf.lastApplied)
+	logs := []LogEntry{}
+	if rf.nextIndex[srvID] <= rf.lastApplied {
+		logs =  rf.logs[rf.nextIndex[srvID]:]
+	}
 	prevLog := rf.logs[rf.nextIndex[srvID]-1]
 	args := &AppendEntriesArgs{
 		Term:         rf.currentTerm,
@@ -128,6 +131,7 @@ redo:
 	if reply.Success {
 		rf.mu.Lock()
 		rf.nextIndex[srvID] += len(logs)
+		rf.matchIndex[srvID] += len(logs)
 		rf.mu.Unlock()
 		if echoCh != nil {
 			echoCh <- struct{}{}
@@ -135,10 +139,10 @@ redo:
 		return true
 	} else {
 		// handle rejected AppendRPC
-		rf.DPrintf("decrease nextIndex and redo")
 		rf.mu.Lock()
 		rf.nextIndex[srvID]--
 		rf.mu.Unlock()
+		rf.DPrintf("redo")
 		goto redo
 	}
 }

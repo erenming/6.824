@@ -295,7 +295,7 @@ func (rf *Raft) updateStateMachine(msg ApplyMsg) {
 
 func (rf *Raft) checkElectionTimeout() {
 	for {
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(1 * time.Millisecond)
 		if rf.killed() {
 			break
 		}
@@ -386,12 +386,14 @@ func (rf *Raft) handleToLeader(ctx context.Context) {
 			case LEADER, FOLLOWER:
 				// impossible, then pass
 			case CANDIDATE:
-				rf.DPrintf("leader selected, nextIndex: %+v, term: %d", rf.NextIndex(), rf.CurrentTerm())
 				rf.mu.Lock()
 				rf.role = LEADER
 				rf.doneHeartBeat = make(chan struct{})
 				rf.mu.Unlock()
 				go rf.runHeartBeat()
+
+				rf.initNextIndex()
+				// rf.initMatchIndex()
 			}
 		}
 	}

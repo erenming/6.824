@@ -34,22 +34,24 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.currentTerm = args.Term
 	rf.refreshTime = time.Now()
 
+	if args.PrevLogIndex > rf.lastApplied {
+		reply.Term = rf.currentTerm
+		reply.Success = false
+		return
+	}
 	if len(args.Entries) > 0 {
 		// TODO. check and remove inconsistency logEntry
-		n := len(rf.logs)
 		prevLog := rf.logs[rf.lastApplied]
-		rf.DPrintf("prevLog: %+v, args.PrevLogTerm: %d, args.PrevLogIndex: %d", prevLog, args.PrevLogTerm, args.PrevLogIndex)
 		if prevLog.Term != args.PrevLogTerm || prevLog.Index != args.PrevLogIndex {
-			rf.logs = rf.logs[:n-1]
-			rf.lastApplied = len(rf.logs) - 1
+			rf.lastApplied--
+			rf.logs = rf.logs[:rf.lastApplied]
 
 			reply.Term = rf.currentTerm
 			reply.Success = false
 			return
 		}
-
 		rf.logs = append(rf.logs, args.Entries...)
-		rf.lastApplied = len(rf.logs) - 1
+		rf.lastApplied += len(args.Entries)
 	}
 
 	if args.LeaderCommit > rf.commitIndex {
@@ -96,11 +98,11 @@ func (rf *Raft) broadcastAE() {
 				return
 			}
 
-			if reply.Success {
-				rf.mu.Lock()
-				rf.matchIndex[server] = rf.nextIndex[server] - 1
-				rf.mu.Unlock()
-			}
+			// if reply.Success {
+			// 	rf.mu.Lock()
+			// 	rf.matchIndex[server] = rf.nextIndex[server] - 1
+			// 	rf.mu.Unlock()
+			// }
 		}(idx)
 	}
 }
