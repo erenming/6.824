@@ -39,34 +39,42 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = false
 		return
 	}
+
 	if len(args.Entries) > 0 {
 		// TODO. check and remove inconsistency logEntry
-		prevLog := rf.logs[rf.lastApplied]
+		lastIndex := len(rf.logs) - 1
+		prevLog := rf.logs[lastIndex]
 		if prevLog.Term != args.PrevLogTerm || prevLog.Index != args.PrevLogIndex {
-			rf.lastApplied--
-			rf.logs = rf.logs[:rf.lastApplied]
+			rf.logs = rf.logs[:lastIndex]
 
 			reply.Term = rf.currentTerm
 			reply.Success = false
 			return
 		}
 		rf.logs = append(rf.logs, args.Entries...)
-		rf.lastApplied += len(args.Entries)
 	}
 
 	if args.LeaderCommit > rf.commitIndex {
-		for i := rf.commitIndex + 1; i <= rf.lastApplied; i++ {
+		minIdx := min(args.LeaderCommit, len(rf.logs)-1)
+		for i := rf.commitIndex + 1; i <= minIdx; i++ {
 			rf.updateStateMachine(ApplyMsg{
 				CommandValid: true,
 				Command:      rf.logs[i].Command,
 				CommandIndex: i,
 			})
 		}
-		rf.commitIndex = rf.lastApplied
+		rf.commitIndex = minIdx
 	}
 	reply.Term = args.Term
 	reply.Success = true
 	return
+}
+
+func min(x, y int) int {
+	if x < y {
+		return x
+	}
+	return y
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {

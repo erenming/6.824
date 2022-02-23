@@ -29,8 +29,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
 		return
-	} else {
-		rf.DPrintf("args: %+v is more up-to-date, prevLog: %+v", args, rf.logs[rf.lastApplied])
 	}
 
 	if args.Term < rf.currentTerm {

@@ -92,6 +92,7 @@ type Raft struct {
 	logs []LogEntry // start from index=1, ignore logs[0]
 
 	// replicate related
+	// index of highest log entry applied to state machine
 	lastApplied int
 	nextIndex   []int
 	// commit related
@@ -290,12 +291,13 @@ func Make(peers []*labrpc.ClientEnd, me int,
 }
 
 func (rf *Raft) updateStateMachine(msg ApplyMsg) {
+	rf.lastApplied++
 	rf.applyCh <- msg
 }
 
 func (rf *Raft) checkElectionTimeout() {
 	for {
-		time.Sleep(1 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 		if rf.killed() {
 			break
 		}
@@ -391,8 +393,8 @@ func (rf *Raft) handleToLeader(ctx context.Context) {
 				rf.doneHeartBeat = make(chan struct{})
 				rf.mu.Unlock()
 				go rf.runHeartBeat()
-
 				rf.initNextIndex()
+				rf.DPrintf("leader elected")
 				// rf.initMatchIndex()
 			}
 		}
@@ -404,7 +406,7 @@ func (rf *Raft) initNextIndex() {
 	defer rf.mu.Unlock()
 	nextIndex := make([]int, len(rf.peers))
 	for i := 0; i < len(rf.peers); i++ {
-		nextIndex[i] = rf.lastApplied + 1
+		nextIndex[i] = len(rf.logs)
 	}
 	rf.nextIndex = nextIndex
 }

@@ -32,7 +32,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Term:    rf.currentTerm,
 	}
 	rf.logs = append(rf.logs, le)
-	rf.lastApplied++
 	rf.mu.Unlock()
 
 	// 2. replica logEntry to followers
@@ -60,6 +59,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 					Command:      rf.logs[rf.commitIndex].Command,
 					CommandIndex: rf.commitIndex,
 				})
+				rf.DPrintf("majority apply")
 				rf.mu.Unlock()
 				return rf.LastApplied(), rf.CurrentTerm(), true
 			}
@@ -83,7 +83,7 @@ func (rf *Raft) replica() chan struct{} {
 			if !ok {
 				// network error, retry background forever
 				go func() {
-					for rf.Role() == LEADER && !rf.replicaServer(server, nil) {
+					for !rf.replicaServer(server, nil) {
 						// decrease cpu
 						time.Sleep(time.Millisecond * 10)
 					}
@@ -101,13 +101,13 @@ func (rf *Raft) replica() chan struct{} {
 
 func (rf *Raft) replicaServer(srvID int, echoCh chan struct{}) bool {
 redo:
-	rf.mu.Lock()
-	rf.DPrintf("leader nextIndex: %+v,  replica to server %d, rf.lastApplied: %+v", rf.nextIndex, srvID, rf.lastApplied)
-	logs := []LogEntry{}
-	if rf.nextIndex[srvID] <= rf.lastApplied {
-		logs =  rf.logs[rf.nextIndex[srvID]:]
+	if rf.killed() {
+		return true
 	}
+	rf.mu.Lock()
+	logs := rf.logs[rf.nextIndex[srvID]:]
 	prevLog := rf.logs[rf.nextIndex[srvID]-1]
+	rf.DPrintf("nextIndex: %+v, to server %d, prev: %+v, logs: %+v, commit: %d", rf.nextIndex, srvID, prevLog, logs, rf.commitIndex)
 	args := &AppendEntriesArgs{
 		Term:         rf.currentTerm,
 		LeaderId:     rf.me,
@@ -142,7 +142,6 @@ redo:
 		rf.mu.Lock()
 		rf.nextIndex[srvID]--
 		rf.mu.Unlock()
-		rf.DPrintf("redo")
 		goto redo
 	}
 }
