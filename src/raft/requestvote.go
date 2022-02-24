@@ -55,7 +55,7 @@ func (rf *Raft) isMoreUpToDate(args *RequestVoteArgs) bool {
 	if args.LastLogTerm == prevLog.Term {
 		return args.LastLogIndex >= prevLog.Index
 	} else {
-		return args.LastLogTerm > prevLog.Term
+		return args.LastLogTerm >= prevLog.Term
 	}
 }
 

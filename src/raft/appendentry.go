@@ -7,7 +7,7 @@ import (
 type AppendEntriesArgs struct {
 	Term                      int
 	LeaderId                  int
-	PrevLogIndex, PrevLogTerm int // ?
+	PrevLogIndex, PrevLogTerm int
 	Entries                   []LogEntry
 	LeaderCommit              int
 }
@@ -34,24 +34,26 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.currentTerm = args.Term
 	rf.refreshTime = time.Now()
 
-	if args.PrevLogIndex > rf.lastApplied {
-		reply.Term = rf.currentTerm
-		reply.Success = false
-		return
-	}
-
 	if len(args.Entries) > 0 {
 		// TODO. check and remove inconsistency logEntry
 		lastIndex := len(rf.logs) - 1
+
+		if args.PrevLogIndex > lastIndex {
+			reply.Term = rf.currentTerm
+			reply.Success = false
+			return
+		}
+
 		prevLog := rf.logs[lastIndex]
-		if prevLog.Term != args.PrevLogTerm || prevLog.Index != args.PrevLogIndex {
+		if prevLog.Term == args.PrevLogTerm && prevLog.Index == args.PrevLogIndex {
+			rf.logs = append(rf.logs, args.Entries...)
+		} else {
 			rf.logs = rf.logs[:lastIndex]
 
 			reply.Term = rf.currentTerm
 			reply.Success = false
 			return
 		}
-		rf.logs = append(rf.logs, args.Entries...)
 	}
 
 	if args.LeaderCommit > rf.commitIndex {

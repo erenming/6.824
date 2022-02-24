@@ -394,8 +394,6 @@ func (rf *Raft) handleToLeader(ctx context.Context) {
 				rf.mu.Unlock()
 				go rf.runHeartBeat()
 				rf.initNextIndex()
-				rf.DPrintf("leader elected")
-				// rf.initMatchIndex()
 			}
 		}
 	}

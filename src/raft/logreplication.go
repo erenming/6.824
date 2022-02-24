@@ -32,6 +32,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Term:    rf.currentTerm,
 	}
 	rf.logs = append(rf.logs, le)
+	latestIndex := len(rf.logs) - 1
 	rf.mu.Unlock()
 
 	// 2. replica logEntry to followers
@@ -45,31 +46,32 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		}
 
 		select {
-		case _, ok := <-ch:
+		case length, ok := <-ch:
 			if !ok {
-				return rf.LastApplied(), rf.CurrentTerm(), true
+				return latestIndex, rf.CurrentTerm(), true
 			}
 
 			cnt++
 			if cnt >= n/2+n%2 { // majority
 				rf.mu.Lock()
-				rf.commitIndex++
-				rf.updateStateMachine(ApplyMsg{
-					CommandValid: true,
-					Command:      rf.logs[rf.commitIndex].Command,
-					CommandIndex: rf.commitIndex,
-				})
-				rf.DPrintf("majority apply")
+				for i := rf.commitIndex+1; i <= length+rf.commitIndex; i++ {
+					rf.updateStateMachine(ApplyMsg{
+						CommandValid: true,
+						Command:      rf.logs[i].Command,
+						CommandIndex: i,
+					})
+				}
+				rf.commitIndex += length
 				rf.mu.Unlock()
-				return rf.LastApplied(), rf.CurrentTerm(), true
+				return latestIndex, rf.CurrentTerm(), true
 			}
 		}
 	}
 }
 
 // 信号通道：一旦有server复制成功则发送一个信号
-func (rf *Raft) replica() chan struct{} {
-	ch := make(chan struct{})
+func (rf *Raft) replica() chan int {
+	ch := make(chan int)
 	var wg sync.WaitGroup
 	wg.Add(len(rf.peers) - 1)
 	for idx, _ := range rf.peers {
@@ -99,15 +101,15 @@ func (rf *Raft) replica() chan struct{} {
 	return ch
 }
 
-func (rf *Raft) replicaServer(srvID int, echoCh chan struct{}) bool {
+func (rf *Raft) replicaServer(srvID int, echoCh chan int) bool {
 redo:
 	if rf.killed() {
 		return true
 	}
 	rf.mu.Lock()
+	rf.DPrintf("nextIndex: %+v, to server %d, commit: %d, len: %d", rf.nextIndex, srvID, rf.commitIndex, len(rf.logs))
 	logs := rf.logs[rf.nextIndex[srvID]:]
 	prevLog := rf.logs[rf.nextIndex[srvID]-1]
-	rf.DPrintf("nextIndex: %+v, to server %d, prev: %+v, logs: %+v, commit: %d", rf.nextIndex, srvID, prevLog, logs, rf.commitIndex)
 	args := &AppendEntriesArgs{
 		Term:         rf.currentTerm,
 		LeaderId:     rf.me,
@@ -134,7 +136,7 @@ redo:
 		rf.matchIndex[srvID] += len(logs)
 		rf.mu.Unlock()
 		if echoCh != nil {
-			echoCh <- struct{}{}
+			echoCh <- len(logs)
 		}
 		return true
 	} else {

@@ -234,7 +234,6 @@ func TestFailNoAgree2B(t *testing.T) {
 	cfg.connect((leader + 2) % servers)
 	cfg.connect((leader + 3) % servers)
 
-	fmt.Println(111111)
 	// the disconnected majority may have chosen a leader from
 	// among their own ranks, forgetting index 2.
 	leader2 := cfg.checkOneLeader()
@@ -246,14 +245,12 @@ func TestFailNoAgree2B(t *testing.T) {
 	if index2 < 2 || index2 > 3 {
 		t.Fatalf("unexpected index %v", index2)
 	}
-	fmt.Println(222222)
 	cfg.one(1000, servers, true)
 
 	cfg.end()
 }
 
 func TestConcurrentStarts2B(t *testing.T) {
-	return
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
