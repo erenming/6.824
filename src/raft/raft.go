@@ -421,12 +421,11 @@ func (rf *Raft) initMatchIndex() {
 
 func (rf *Raft) runHeartBeat() {
 	for {
-		rf.broadcastAE()
-
 		select {
 		case <-rf.doneHeartBeat:
 			return
 		case <-time.After(rf.ElectionTimeout() / 10):
 		}
+		rf.broadcastAE()
 	}
 }
