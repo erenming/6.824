@@ -347,7 +347,6 @@ func (rf *Raft) handleToFollower(ctx context.Context) {
 				rf.electionTimeout = randomElectionTimeout()
 				rf.refreshTime = time.Now()
 				rf.votedFor = -1
-				// close(rf.doneHeartBeat)
 				rf.mu.Unlock()
 			}
 		case <-ctx.Done():

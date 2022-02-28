@@ -41,7 +41,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if args.PrevLogIndex > lastLog.Index {
 			reply.Term = rf.currentTerm
 			reply.Success = false
-			rf.DPrintf("false 1")
 			return
 		}
 
@@ -53,7 +52,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		} else {
 			reply.Term = rf.currentTerm
 			reply.Success = false
-			rf.DPrintf("false 2")
 			return
 		}
 	}

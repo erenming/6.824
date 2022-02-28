@@ -20,6 +20,7 @@ type RequestVoteReply struct {
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if args.Term > rf.CurrentTerm() {
 		rf.toFollowerCh <- args.Term
+		rf.DPrintf("rf.toFollowerCh <- args.Term")
 	}
 
 	rf.mu.Lock()
@@ -93,8 +94,10 @@ func (rf *Raft) runElection() {
 			rf.DPrintf("timeout wait")
 			return
 		case reply := <-ch:
-			if args.Term != reply.Term || rf.CurrentTerm() != reply.Term {
-				continue
+			if rf.CurrentTerm() < reply.Term {
+				rf.toFollowerCh <- reply.Term
+				rf.DPrintf("become follower return!!!")
+				return
 			}
 
 			if reply.VoteGranted {
