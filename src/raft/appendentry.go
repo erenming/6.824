@@ -41,16 +41,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if args.PrevLogIndex > lastLog.Index {
 			reply.Term = rf.currentTerm
 			reply.Success = false
+			rf.DPrintf("false 1")
 			return
 		}
 
 		rf.logs = rf.logs[:args.PrevLogIndex+1]
 		prevLog := rf.logs[args.PrevLogIndex]
+
 		if prevLog.Term == args.PrevLogTerm {
 			rf.logs = append(rf.logs, args.Entries...)
 		} else {
 			reply.Term = rf.currentTerm
 			reply.Success = false
+			rf.DPrintf("false 2")
 			return
 		}
 	}
