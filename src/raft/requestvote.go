@@ -28,12 +28,14 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if !rf.isMoreUpToDate(args) {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
+		rf.DPrintf("reject isMoreUpToDate")
 		return
 	}
 
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
+		rf.DPrintf("reject args.Term < rf.currentTerm")
 		return
 	}
 
@@ -46,12 +48,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	} else {
 		reply.Term = args.Term
 		reply.VoteGranted = false
+		rf.DPrintf("votedFor not equal or -1")
 	}
 }
 
 // check args is more update-to-date server
 func (rf *Raft) isMoreUpToDate(args *RequestVoteArgs) bool {
-	prevLog := rf.logs[rf.commitIndex]
+	prevLog := rf.logs[len(rf.logs)-1]
 	if args.LastLogTerm == prevLog.Term {
 		return args.LastLogIndex >= prevLog.Index
 	} else {
@@ -66,10 +69,11 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 
 func (rf *Raft) runElection() {
 	rf.mu.Lock()
+	rf.DPrintf("election")
 	rf.role = CANDIDATE
 	rf.currentTerm++
 	rf.votedFor = rf.me
-	lastLog := rf.logs[rf.commitIndex]
+	lastLog := rf.logs[len(rf.logs)-1]
 	args := &RequestVoteArgs{
 		Term:         rf.currentTerm,
 		CandidateID:  rf.me,
@@ -83,6 +87,10 @@ func (rf *Raft) runElection() {
 	for {
 		select {
 		case <-time.After(rf.ElectionTimeout()):
+			rf.mu.Lock()
+			rf.votedFor = -1
+			rf.mu.Unlock()
+			rf.DPrintf("timeout wait")
 			return
 		case reply := <-ch:
 			if args.Term != reply.Term || rf.CurrentTerm() != reply.Term {
@@ -94,6 +102,7 @@ func (rf *Raft) runElection() {
 			}
 
 			if cnt >= n/2+n%2 && rf.Role() == CANDIDATE {
+				rf.DPrintf("signal toLeaderCh")
 				rf.toLeaderCh <- struct{}{}
 				return
 			}

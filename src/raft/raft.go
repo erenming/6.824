@@ -83,7 +83,7 @@ type Raft struct {
 	currentTerm, votedFor int
 	role                  ServerRole
 
-	doneHeartBeat chan struct{}
+	// doneHeartBeat chan struct{}
 	toFollowerCh  chan int
 	toCandidateCh chan struct{}
 	toLeaderCh    chan struct{}
@@ -283,9 +283,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.toLeaderCh = make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
 	rf.cancelFunc = cancel
-	go rf.eventLoop(ctx)
+	rf.eventLoop(ctx)
 
-	go rf.checkElectionTimeout()
+	go rf.checkElectionTimeout(ctx)
 
 	return rf
 }
@@ -295,16 +295,18 @@ func (rf *Raft) updateStateMachine(msg ApplyMsg) {
 	rf.applyCh <- msg
 }
 
-func (rf *Raft) checkElectionTimeout() {
+func (rf *Raft) checkElectionTimeout(ctx context.Context) {
 	for {
-		time.Sleep(5 * time.Millisecond)
-		if rf.killed() {
-			break
+		select {
+		case <-ctx.Done():
+			return
+		default:
 		}
 		if rf.Role() == LEADER {
 			continue
 		}
 
+		time.Sleep(5 * time.Millisecond)
 		rf.mu.Lock()
 		to := time.Since(rf.refreshTime) > rf.electionTimeout
 		rf.mu.Unlock()
@@ -345,7 +347,7 @@ func (rf *Raft) handleToFollower(ctx context.Context) {
 				rf.electionTimeout = randomElectionTimeout()
 				rf.refreshTime = time.Now()
 				rf.votedFor = -1
-				close(rf.doneHeartBeat)
+				// close(rf.doneHeartBeat)
 				rf.mu.Unlock()
 			}
 		case <-ctx.Done():
@@ -390,10 +392,11 @@ func (rf *Raft) handleToLeader(ctx context.Context) {
 			case CANDIDATE:
 				rf.mu.Lock()
 				rf.role = LEADER
-				rf.doneHeartBeat = make(chan struct{})
 				rf.mu.Unlock()
-				go rf.runHeartBeat()
 				rf.initNextIndex()
+				rf.broadcastAE()
+				go rf.runHeartBeat()
+				rf.DPrintf("to leader done")
 			}
 		}
 	}
@@ -421,12 +424,13 @@ func (rf *Raft) initMatchIndex() {
 
 func (rf *Raft) runHeartBeat() {
 	for {
-		rf.broadcastAE()
-
-		select {
-		case <-rf.doneHeartBeat:
-			return
-		case <-time.After(rf.ElectionTimeout() / 10):
+		if rf.Role() != LEADER {
+			break
 		}
+		if rf.killed() {
+			break
+		}
+		time.Sleep(rf.ElectionTimeout() / 10)
+		rf.broadcastAE()
 	}
 }
