@@ -449,6 +449,10 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 				if ok {
 					index = index1
 					break
+				} else {
+					if index1 != -1 {
+						fmt.Println("server: ",rf.me)
+					}
 				}
 			}
 		}

@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"math"
 	"sync"
 )
 
@@ -32,11 +33,11 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 	rf.logs = append(rf.logs, le)
 	latestIndex := len(rf.logs) - 1
-	length := len(rf.logs)
 	rf.mu.Unlock()
 
 	// 2. replica logEntry to followers
 	ch := rf.replica()
+	srvList := []int{}
 
 	// 2. handle Request&Response
 	cnt, n := 1, len(rf.peers)
@@ -46,54 +47,42 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		}
 
 		select {
-		case l, ok := <-ch:
+		case srvID, ok := <-ch:
 			if !ok {
 				return latestIndex, rf.CurrentTerm(), true
 			}
 
-			if l < length {
-				length = l
-			}
-
 			cnt++
+			srvList = append(srvList, srvID)
 			if cnt >= n/2+n%2 { // majority
-				rf.checkAndApply(length)
+				rf.checkAndCommit(srvList)
 				return latestIndex, rf.CurrentTerm(), true
 			}
 		}
 	}
 }
 
-func (rf *Raft) checkAndApply(length int) {
+func (rf *Raft) checkAndCommit(srvList []int) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	// match := make([]int, len(rf.matchIndex))
-	// copy(match, rf.matchIndex)
-	// sort.Slice(match, func(i, j int) bool {
-	// 	return match[i] > match[j]
-	// })
-	//
-	// majority := len(rf.peers)/2 + len(rf.peers)%2
-	// toCommit := match[0]
-	// for i := 1; i < len(rf.nextIndex); i++ {
-	// 	if rf.nextIndex[i] == toCommit {
-	// 		continue
-	// 	}
-	// 	if i-1 >= majority {
-	// 		break
-	// 	} else {
-	// 		toCommit = rf.nextIndex[i]
-	// 	}
-	// }
-
-	for i := rf.commitIndex + 1; i < length+rf.commitIndex+1; i++ {
+	if rf.commitIndex == len(rf.logs)-1 {
+		return
+	}
+	newCommitIndex := math.MaxInt64
+	for _, srv := range srvList {
+		if rf.matchIndex[srv] < newCommitIndex {
+			newCommitIndex = rf.matchIndex[srv]
+		}
+	}
+	for i := rf.commitIndex + 1; i <= newCommitIndex; i++ {
 		rf.updateStateMachine(ApplyMsg{
 			CommandValid: true,
 			Command:      rf.logs[i].Command,
 			CommandIndex: i,
 		})
 	}
-	rf.commitIndex += length
+	rf.commitIndex = newCommitIndex
+	rf.DPrintf("commitIndex: %d, lastLog: %+v, matchIndex: %+v, srvList: %+v", rf.commitIndex, rf.logs[len(rf.logs)-1], rf.matchIndex, srvList)
 }
 
 // 信号通道：一旦有server复制成功则发送一个信号
@@ -153,17 +142,27 @@ redo:
 	}
 
 	if reply.Term > rf.CurrentTerm() {
-		rf.toFollowerCh <- reply.Term
+		rf.toFollowerCh <- toFollowerEvent{
+			term:   reply.Term,
+			server: rf.me,
+		}
 		return true
 	}
 
 	if reply.Success {
 		rf.mu.Lock()
-		rf.nextIndex[srvID] += len(logs)
-		rf.matchIndex[srvID] += len(logs)
+		toInc := 0
+		for i := len(logs) - 1; i >= 0; i-- {
+			if logs[i].Index >= rf.nextIndex[srvID] {
+				toInc++
+			}
+		}
+		rf.nextIndex[srvID] += toInc
+		rf.matchIndex[srvID] += toInc
+		rf.DPrintf("reply.Success, nextIndex: %+v, matchIndex: %+v, server: %d, add: %d, loglen: %d, commitIndex: %d", rf.nextIndex, rf.matchIndex, srvID, len(logs), len(rf.logs), rf.commitIndex)
 		rf.mu.Unlock()
 		if echoCh != nil {
-			echoCh <- len(logs)
+			echoCh <- srvID
 		}
 		return true
 	} else {

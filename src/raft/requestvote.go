@@ -19,8 +19,10 @@ type RequestVoteReply struct {
 
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if args.Term > rf.CurrentTerm() {
-		rf.toFollowerCh <- args.Term
-		rf.DPrintf("rf.toFollowerCh <- args.Term")
+		rf.toFollowerCh <- toFollowerEvent{
+			term:   args.Term,
+			server: rf.me,
+		}
 	}
 
 	rf.mu.Lock()
@@ -36,7 +38,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
-		rf.DPrintf("reject args.Term < rf.currentTerm")
 		return
 	}
 
@@ -44,10 +45,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.votedFor = args.CandidateID
 		rf.electionTimeout = randomElectionTimeout()
 		rf.refreshTime = time.Now()
-		reply.Term = args.Term
+		reply.Term = rf.currentTerm
 		reply.VoteGranted = true
 	} else {
-		reply.Term = args.Term
+		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
 		rf.DPrintf("votedFor not equal or -1")
 	}
@@ -70,7 +71,6 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 
 func (rf *Raft) runElection() {
 	rf.mu.Lock()
-	rf.DPrintf("election")
 	rf.role = CANDIDATE
 	rf.currentTerm++
 	rf.votedFor = rf.me
@@ -81,6 +81,7 @@ func (rf *Raft) runElection() {
 		LastLogTerm:  lastLog.Term,
 		LastLogIndex: lastLog.Index,
 	}
+	rf.DPrintf("election start, term: %d", rf.currentTerm)
 	rf.mu.Unlock()
 
 	ch := rf.broadcastRV(args)
@@ -91,12 +92,13 @@ func (rf *Raft) runElection() {
 			rf.mu.Lock()
 			rf.votedFor = -1
 			rf.mu.Unlock()
-			rf.DPrintf("timeout wait")
 			return
 		case reply := <-ch:
 			if rf.CurrentTerm() < reply.Term {
-				rf.toFollowerCh <- reply.Term
-				rf.DPrintf("become follower return!!!")
+				rf.toFollowerCh <- toFollowerEvent{
+					term:   reply.Term,
+					server: rf.me,
+				}
 				return
 			}
 
@@ -105,7 +107,6 @@ func (rf *Raft) runElection() {
 			}
 
 			if cnt >= n/2+n%2 && rf.Role() == CANDIDATE {
-				rf.DPrintf("signal toLeaderCh")
 				rf.toLeaderCh <- struct{}{}
 				return
 			}

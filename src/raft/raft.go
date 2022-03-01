@@ -84,7 +84,7 @@ type Raft struct {
 	role                  ServerRole
 
 	// doneHeartBeat chan struct{}
-	toFollowerCh  chan int
+	toFollowerCh  chan toFollowerEvent
 	toCandidateCh chan struct{}
 	toLeaderCh    chan struct{}
 	cancelFunc    context.CancelFunc
@@ -101,6 +101,11 @@ type Raft struct {
 
 	debugMu sync.Mutex
 	applyCh chan ApplyMsg
+}
+
+type toFollowerEvent struct {
+	term   int
+	server int
 }
 
 func (rf *Raft) NextIndex() []int {
@@ -276,9 +281,13 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.lastApplied = 0
 	rf.initNextIndex()
-	rf.initMatchIndex()
+	matchIndex := make([]int, len(rf.peers))
+	for i := 0; i < len(rf.peers); i++ {
+		matchIndex[i] = 0
+	}
+	rf.matchIndex = matchIndex
 
-	rf.toFollowerCh = make(chan int)
+	rf.toFollowerCh = make(chan toFollowerEvent)
 	rf.toCandidateCh = make(chan struct{})
 	rf.toLeaderCh = make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -326,14 +335,15 @@ func (rf *Raft) eventLoop(ctx context.Context) {
 func (rf *Raft) handleToFollower(ctx context.Context) {
 	for {
 		select {
-		case term := <-rf.toFollowerCh:
+		case event := <-rf.toFollowerCh:
 			switch rf.Role() {
 			case FOLLOWER:
 				// impossible, then pass
 			case CANDIDATE:
 				// discover current leader or new term
+				rf.DPrintf("become follower from CANDIDATE, event: %+v", event)
 				rf.mu.Lock()
-				rf.currentTerm = term
+				rf.currentTerm = event.term
 				rf.role = FOLLOWER
 				rf.electionTimeout = randomElectionTimeout()
 				rf.refreshTime = time.Now()
@@ -341,8 +351,9 @@ func (rf *Raft) handleToFollower(ctx context.Context) {
 				rf.mu.Unlock()
 			case LEADER:
 				// discover server with higher term
+				rf.DPrintf("become follower from LEADER, term: %+v", event)
 				rf.mu.Lock()
-				rf.currentTerm = term
+				rf.currentTerm = event.term
 				rf.role = FOLLOWER
 				rf.electionTimeout = randomElectionTimeout()
 				rf.refreshTime = time.Now()
@@ -393,9 +404,8 @@ func (rf *Raft) handleToLeader(ctx context.Context) {
 				rf.role = LEADER
 				rf.mu.Unlock()
 				rf.initNextIndex()
-				rf.broadcastAE()
 				go rf.runHeartBeat()
-				rf.DPrintf("to leader done")
+				rf.DPrintf("to leader done, term: %d", rf.CurrentTerm())
 			}
 		}
 	}
@@ -409,16 +419,6 @@ func (rf *Raft) initNextIndex() {
 		nextIndex[i] = len(rf.logs)
 	}
 	rf.nextIndex = nextIndex
-}
-
-func (rf *Raft) initMatchIndex() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	matchIndex := make([]int, len(rf.peers))
-	for i := 0; i < len(rf.peers); i++ {
-		matchIndex[i] = 0
-	}
-	rf.matchIndex = matchIndex
 }
 
 func (rf *Raft) runHeartBeat() {

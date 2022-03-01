@@ -19,16 +19,19 @@ type AppendEntriesReply struct {
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	// Your code here (2A, 2B).
-	if rf.Role() != FOLLOWER {
-		rf.toFollowerCh <- args.Term
-	}
-
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.Success = false
 		return
+	}
+
+	if rf.role != FOLLOWER {
+		rf.toFollowerCh <- toFollowerEvent{
+			term:   args.Term,
+			server: rf.me,
+		}
 	}
 
 	rf.currentTerm = args.Term
@@ -67,7 +70,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 		rf.commitIndex = minIdx
 	}
-	reply.Term = args.Term
+	reply.Term = rf.currentTerm
 	reply.Success = true
 	return
 }
@@ -104,15 +107,13 @@ func (rf *Raft) broadcastAE() {
 			}
 
 			if reply.Term > rf.CurrentTerm() {
-				rf.toFollowerCh <- reply.Term
+				rf.toFollowerCh <- toFollowerEvent{
+					term:   reply.Term,
+					server: rf.me,
+				}
 				return
 			}
 
-			// if reply.Success {
-			// 	rf.mu.Lock()
-			// 	rf.matchIndex[server] = rf.nextIndex[server] - 1
-			// 	rf.mu.Unlock()
-			// }
 		}(idx)
 	}
 }
