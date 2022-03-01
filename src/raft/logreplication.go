@@ -169,6 +169,7 @@ redo:
 		// handle rejected AppendRPC
 		rf.mu.Lock()
 		rf.nextIndex[srvID]--
+		rf.matchIndex[srvID]--
 		rf.mu.Unlock()
 		goto redo
 	}

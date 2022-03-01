@@ -281,11 +281,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.lastApplied = 0
 	rf.initNextIndex()
-	matchIndex := make([]int, len(rf.peers))
-	for i := 0; i < len(rf.peers); i++ {
-		matchIndex[i] = 0
-	}
-	rf.matchIndex = matchIndex
+	rf.initMatchIndex()
 
 	rf.toFollowerCh = make(chan toFollowerEvent)
 	rf.toCandidateCh = make(chan struct{})
@@ -404,6 +400,7 @@ func (rf *Raft) handleToLeader(ctx context.Context) {
 				rf.role = LEADER
 				rf.mu.Unlock()
 				rf.initNextIndex()
+				rf.initMatchIndex()
 				go rf.runHeartBeat()
 				rf.DPrintf("to leader done, term: %d", rf.CurrentTerm())
 			}
@@ -419,6 +416,16 @@ func (rf *Raft) initNextIndex() {
 		nextIndex[i] = len(rf.logs)
 	}
 	rf.nextIndex = nextIndex
+}
+
+func (rf *Raft) initMatchIndex() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	matchIndex := make([]int, len(rf.peers))
+	for i := 0; i < len(rf.peers); i++ {
+		matchIndex[i] = len(rf.logs) - 1
+	}
+	rf.matchIndex = matchIndex
 }
 
 func (rf *Raft) runHeartBeat() {
