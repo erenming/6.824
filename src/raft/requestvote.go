@@ -27,11 +27,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-
 	if !rf.isMoreUpToDate(args) {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
-		rf.DPrintf("reject isMoreUpToDate")
 		return
 	}
 
@@ -50,7 +48,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	} else {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
-		rf.DPrintf("votedFor not equal or -1")
 	}
 }
 
@@ -81,13 +78,14 @@ func (rf *Raft) runElection() {
 		LastLogTerm:  lastLog.Term,
 		LastLogIndex: lastLog.Index,
 	}
-	rf.DPrintf("election start, term: %d", rf.currentTerm)
 	rf.mu.Unlock()
 
 	ch := rf.broadcastRV(args)
 	cnt, n := 1, len(rf.peers)
 	for {
 		select {
+		case <-rf.doneServer:
+			return
 		case <-time.After(rf.ElectionTimeout()):
 			rf.mu.Lock()
 			rf.votedFor = -1

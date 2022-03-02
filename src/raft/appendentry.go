@@ -19,21 +19,21 @@ type AppendEntriesReply struct {
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	// Your code here (2A, 2B).
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	if args.Term < rf.currentTerm {
-		reply.Term = rf.currentTerm
+	if args.Term < rf.CurrentTerm() {
+		reply.Term = rf.CurrentTerm()
 		reply.Success = false
 		return
 	}
 
-	if rf.role != FOLLOWER {
+	if rf.Role() != FOLLOWER {
 		rf.toFollowerCh <- toFollowerEvent{
 			term:   args.Term,
 			server: rf.me,
 		}
 	}
 
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	rf.currentTerm = args.Term
 	rf.refreshTime = time.Now()
 

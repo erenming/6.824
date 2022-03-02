@@ -18,7 +18,6 @@ package raft
 //
 
 import (
-	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -87,7 +86,7 @@ type Raft struct {
 	toFollowerCh  chan toFollowerEvent
 	toCandidateCh chan struct{}
 	toLeaderCh    chan struct{}
-	cancelFunc    context.CancelFunc
+	doneServer    chan struct{}
 
 	logs []LogEntry // start from index=1, ignore logs[0]
 
@@ -234,7 +233,7 @@ func (rf *Raft) readPersist(data []byte) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
-	rf.cancelFunc()
+	close(rf.doneServer)
 }
 
 func (rf *Raft) killed() bool {
@@ -286,11 +285,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.toFollowerCh = make(chan toFollowerEvent)
 	rf.toCandidateCh = make(chan struct{})
 	rf.toLeaderCh = make(chan struct{})
-	ctx, cancel := context.WithCancel(context.Background())
-	rf.cancelFunc = cancel
-	rf.eventLoop(ctx)
+	rf.doneServer = make(chan struct{})
+	rf.eventLoop()
 
-	go rf.checkElectionTimeout(ctx)
+	go rf.checkElectionTimeout()
 
 	return rf
 }
@@ -300,13 +298,14 @@ func (rf *Raft) updateStateMachine(msg ApplyMsg) {
 	rf.applyCh <- msg
 }
 
-func (rf *Raft) checkElectionTimeout(ctx context.Context) {
+func (rf *Raft) checkElectionTimeout() {
 	for {
 		select {
-		case <-ctx.Done():
+		case <-rf.doneServer:
 			return
 		default:
 		}
+
 		if rf.Role() == LEADER {
 			continue
 		}
@@ -322,13 +321,13 @@ func (rf *Raft) checkElectionTimeout(ctx context.Context) {
 	}
 }
 
-func (rf *Raft) eventLoop(ctx context.Context) {
-	go rf.handleToFollower(ctx)
-	go rf.handleToCandidate(ctx)
-	go rf.handleToLeader(ctx)
+func (rf *Raft) eventLoop() {
+	go rf.handleToFollower()
+	go rf.handleToCandidate()
+	go rf.handleToLeader()
 }
 
-func (rf *Raft) handleToFollower(ctx context.Context) {
+func (rf *Raft) handleToFollower() {
 	for {
 		select {
 		case event := <-rf.toFollowerCh:
@@ -356,16 +355,16 @@ func (rf *Raft) handleToFollower(ctx context.Context) {
 				rf.votedFor = -1
 				rf.mu.Unlock()
 			}
-		case <-ctx.Done():
+		case <-rf.doneServer:
 			return
 		}
 	}
 }
 
-func (rf *Raft) handleToCandidate(ctx context.Context) {
+func (rf *Raft) handleToCandidate() {
 	for {
 		select {
-		case <-ctx.Done():
+		case <-rf.doneServer:
 			return
 		case <-rf.toCandidateCh:
 			switch rf.Role() {
@@ -386,10 +385,10 @@ func (rf *Raft) handleToCandidate(ctx context.Context) {
 	}
 }
 
-func (rf *Raft) handleToLeader(ctx context.Context) {
+func (rf *Raft) handleToLeader() {
 	for {
 		select {
-		case <-ctx.Done():
+		case <-rf.doneServer:
 			return
 		case <-rf.toLeaderCh:
 			switch rf.Role() {

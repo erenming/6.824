@@ -58,6 +58,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 				rf.checkAndCommit(srvList)
 				return latestIndex, rf.CurrentTerm(), true
 			}
+		case <-rf.doneServer:
+			return latestIndex, rf.CurrentTerm(), true
 		}
 	}
 }
@@ -82,12 +84,11 @@ func (rf *Raft) checkAndCommit(srvList []int) {
 		})
 	}
 	rf.commitIndex = newCommitIndex
-	rf.DPrintf("commitIndex: %d, lastLog: %+v, matchIndex: %+v, srvList: %+v", rf.commitIndex, rf.logs[len(rf.logs)-1], rf.matchIndex, srvList)
 }
 
 // 信号通道：一旦有server复制成功则发送一个信号
 func (rf *Raft) replica() chan int {
-	ch := make(chan int)
+	ch := make(chan int, len(rf.peers)-1)
 	var wg sync.WaitGroup
 	wg.Add(len(rf.peers) - 1)
 	for idx, _ := range rf.peers {
@@ -159,8 +160,8 @@ redo:
 		}
 		rf.nextIndex[srvID] += toInc
 		rf.matchIndex[srvID] += toInc
-		rf.DPrintf("reply.Success, nextIndex: %+v, matchIndex: %+v, server: %d, add: %d, loglen: %d, commitIndex: %d", rf.nextIndex, rf.matchIndex, srvID, len(logs), len(rf.logs), rf.commitIndex)
 		rf.mu.Unlock()
+		rf.DPrintf("reply.Success, server: %d, add: %d", srvID, toInc)
 		if echoCh != nil {
 			echoCh <- srvID
 		}
