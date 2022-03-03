@@ -3,6 +3,7 @@ package raft
 import (
 	"math"
 	"sync"
+	"time"
 )
 
 //
@@ -100,13 +101,13 @@ func (rf *Raft) replica() chan int {
 			defer wg.Done()
 			ok := rf.replicaServer(server, ch)
 			if !ok {
-				// // network error, retry background forever
-				// go func() {
-				// 	for !rf.replicaServer(server, nil) {
-				// 		// decrease cpu
-				// 		time.Sleep(time.Millisecond * 10)
-				// 	}
-				// }()
+				// network error, retry background forever
+				go func() {
+					for !rf.replicaServer(server, nil) {
+						// decrease cpu
+						time.Sleep(time.Millisecond * 50)
+					}
+				}()
 				return
 			}
 
