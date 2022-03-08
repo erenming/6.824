@@ -3,7 +3,6 @@ package raft
 import (
 	"math"
 	"sync"
-	"time"
 )
 
 //
@@ -102,13 +101,13 @@ func (rf *Raft) replica() chan int {
 			ok := rf.replicaServer(server, ch)
 			if !ok {
 				// network error, retry background forever
-				go func() {
-					for !rf.replicaServer(server, nil) {
-						// decrease cpu
-						time.Sleep(time.Millisecond * 50)
-					}
-				}()
-				return
+				// go func() {
+				// 	for rf.Role() == LEADER && !rf.replicaServer(server, nil) {
+				// 		// decrease cpu
+				// 		time.Sleep(time.Millisecond * 50)
+				// 	}
+				// }()
+				// return
 			}
 
 		}(idx)
@@ -173,6 +172,7 @@ redo:
 		rf.nextIndex[srvID]--
 		rf.matchIndex[srvID]--
 		rf.mu.Unlock()
+		rf.DPrintf("reply.Fail, server: %d", srvID)
 		goto redo
 	}
 }

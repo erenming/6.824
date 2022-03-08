@@ -38,8 +38,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.refreshTime = time.Now()
 
 	if len(args.Entries) > 0 {
-		// TODO. check and remove inconsistency logEntry
-		// lastIndex := len(rf.logs) - 1
 		lastLog := rf.logs[len(rf.logs)-1]
 		if args.PrevLogIndex > lastLog.Index {
 			reply.Term = rf.currentTerm
@@ -49,7 +47,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 		rf.logs = rf.logs[:args.PrevLogIndex+1]
 		prevLog := rf.logs[args.PrevLogIndex]
-
+		rf.DPrintf("rf.logs: %+v, args: %+v", rf.logs, args)
 		if prevLog.Term == args.PrevLogTerm {
 			rf.logs = append(rf.logs, args.Entries...)
 		} else {
