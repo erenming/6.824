@@ -295,6 +295,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 func (rf *Raft) updateStateMachine(msg ApplyMsg) {
 	rf.lastApplied++
+	rf.DPrintf("apply one, lastApplied: %d", rf.lastApplied)
 	rf.applyCh <- msg
 }
 
@@ -333,7 +334,14 @@ func (rf *Raft) handleToFollower() {
 		case event := <-rf.toFollowerCh:
 			switch rf.Role() {
 			case FOLLOWER:
-				// impossible, then pass
+				rf.DPrintf("become follower from FOLLOWER, event: %+v", event)
+				rf.mu.Lock()
+				rf.currentTerm = event.term
+				rf.role = FOLLOWER
+				rf.electionTimeout = randomElectionTimeout()
+				rf.refreshTime = time.Now()
+				rf.votedFor = -1
+				rf.mu.Unlock()
 			case CANDIDATE:
 				// discover current leader or new term
 				rf.DPrintf("become follower from CANDIDATE, event: %+v", event)

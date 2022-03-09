@@ -88,6 +88,9 @@ func (rf *Raft) checkAndCommit(srvList []int) {
 
 // 信号通道：一旦有server复制成功则发送一个信号
 func (rf *Raft) replica() chan int {
+	rf.mu.Lock()
+	rf.DPrintf("start replica, prevLog: %+v, cidx: %d", rf.logs[len(rf.logs)-1], rf.commitIndex)
+	rf.mu.Unlock()
 	ch := make(chan int, len(rf.peers)-1)
 	var wg sync.WaitGroup
 	wg.Add(len(rf.peers) - 1)
@@ -102,12 +105,12 @@ func (rf *Raft) replica() chan int {
 			if !ok {
 				// network error, retry background forever
 				// go func() {
-				// 	for rf.Role() == LEADER && !rf.replicaServer(server, nil) {
+				// 	for !rf.replicaServer(server, nil) {
 				// 		// decrease cpu
-				// 		time.Sleep(time.Millisecond * 50)
+				// 		time.Sleep(time.Millisecond * 100)
 				// 	}
 				// }()
-				// return
+				return
 			}
 
 		}(idx)
@@ -121,10 +124,14 @@ func (rf *Raft) replica() chan int {
 
 func (rf *Raft) replicaServer(srvID int, echoCh chan int) bool {
 redo:
-	if rf.killed() {
+	if rf.killed() || rf.Role() != LEADER {
 		return true
 	}
 	rf.mu.Lock()
+	if len(rf.logs) < rf.nextIndex[srvID] {
+		rf.mu.Unlock()
+		return true
+	}
 	logs := rf.logs[rf.nextIndex[srvID]:]
 	prevLog := rf.logs[rf.nextIndex[srvID]-1]
 	args := &AppendEntriesArgs{

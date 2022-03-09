@@ -37,27 +37,31 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.currentTerm = args.Term
 	rf.refreshTime = time.Now()
 
-	if len(args.Entries) > 0 {
-		lastLog := rf.logs[len(rf.logs)-1]
-		if args.PrevLogIndex > lastLog.Index {
-			reply.Term = rf.currentTerm
-			reply.Success = false
-			return
-		}
+	// it's a log replica when len(args.entries) > 0, else a heartbeat
+	// if len(args.Entries) > 0 {
+	lastLog := rf.logs[len(rf.logs)-1]
+	if args.PrevLogIndex > lastLog.Index {
+		reply.Term = rf.currentTerm
+		reply.Success = false
+		return
+	}
 
+	target := rf.logs[args.PrevLogIndex]
+	if target.Term != args.PrevLogTerm {
+		rf.logs = rf.logs[:args.PrevLogIndex]
+		reply.Term = rf.currentTerm
+		reply.Success = false
+		return
+	} else  {
 		rf.logs = rf.logs[:args.PrevLogIndex+1]
-		prevLog := rf.logs[args.PrevLogIndex]
-		rf.DPrintf("rf.logs: %+v, args: %+v", rf.logs, args)
-		if prevLog.Term == args.PrevLogTerm {
-			rf.logs = append(rf.logs, args.Entries...)
-		} else {
-			reply.Term = rf.currentTerm
-			reply.Success = false
-			return
-		}
+	}
+	if len(args.Entries) > 0 {
+		rf.logs = append(rf.logs, args.Entries...)
+		rf.DPrintf("rf.logs update: %+v", rf.logs)
 	}
 
 	if args.LeaderCommit > rf.commitIndex {
+		// TODO, 不能直接apply
 		minIdx := min(args.LeaderCommit, len(rf.logs)-1)
 		for i := rf.commitIndex + 1; i <= minIdx; i++ {
 			rf.updateStateMachine(ApplyMsg{
@@ -68,6 +72,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 		rf.commitIndex = minIdx
 	}
+	// }
+
 	reply.Term = rf.currentTerm
 	reply.Success = true
 	return
@@ -91,10 +97,13 @@ func (rf *Raft) broadcastAE() {
 		}
 		go func(server int) {
 			rf.mu.Lock()
+			prevLog := rf.logs[len(rf.logs)-1]
 			args := &AppendEntriesArgs{
 				Term:         rf.currentTerm,
 				LeaderId:     rf.me,
 				LeaderCommit: rf.commitIndex,
+				PrevLogIndex: prevLog.Index,
+				PrevLogTerm:  prevLog.Term,
 			}
 			rf.mu.Unlock()
 
