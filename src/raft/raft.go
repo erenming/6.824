@@ -295,7 +295,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 func (rf *Raft) updateStateMachine(msg ApplyMsg) {
 	rf.lastApplied++
-	rf.DPrintf("apply one, lastApplied: %d", rf.lastApplied)
 	rf.applyCh <- msg
 }
 
