@@ -42,11 +42,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// 2. handle Request&Response
 	cnt, n := 1, len(rf.peers)
 	for {
-		if rf.Role() != LEADER {
-			return -1, -1, false
-		}
-
 		select {
+		case <-rf.notLeaderCh:
+			return -1, -1, false
 		case srvID, ok := <-ch:
 			if !ok {
 				return latestIndex, rf.CurrentTerm(), true

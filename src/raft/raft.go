@@ -86,6 +86,7 @@ type Raft struct {
 	toFollowerCh  chan toFollowerEvent
 	toCandidateCh chan struct{}
 	toLeaderCh    chan struct{}
+	notLeaderCh   chan struct{}
 	doneServer    chan struct{}
 
 	logs []LogEntry // start from index=1, ignore logs[0]
@@ -285,6 +286,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.toFollowerCh = make(chan toFollowerEvent)
 	rf.toCandidateCh = make(chan struct{})
 	rf.toLeaderCh = make(chan struct{})
+	rf.notLeaderCh = make(chan struct{})
 	rf.doneServer = make(chan struct{})
 	rf.eventLoop()
 
@@ -331,37 +333,17 @@ func (rf *Raft) handleToFollower() {
 	for {
 		select {
 		case event := <-rf.toFollowerCh:
-			switch rf.Role() {
-			case FOLLOWER:
-				rf.DPrintf("become follower from FOLLOWER, event: %+v", event)
-				rf.mu.Lock()
-				rf.currentTerm = event.term
-				rf.role = FOLLOWER
-				rf.electionTimeout = randomElectionTimeout()
-				rf.refreshTime = time.Now()
-				rf.votedFor = -1
-				rf.mu.Unlock()
-			case CANDIDATE:
-				// discover current leader or new term
-				rf.DPrintf("become follower from CANDIDATE, event: %+v", event)
-				rf.mu.Lock()
-				rf.currentTerm = event.term
-				rf.role = FOLLOWER
-				rf.electionTimeout = randomElectionTimeout()
-				rf.refreshTime = time.Now()
-				rf.votedFor = -1
-				rf.mu.Unlock()
-			case LEADER:
-				// discover server with higher term
-				rf.DPrintf("become follower from LEADER, term: %+v", event)
-				rf.mu.Lock()
-				rf.currentTerm = event.term
-				rf.role = FOLLOWER
-				rf.electionTimeout = randomElectionTimeout()
-				rf.refreshTime = time.Now()
-				rf.votedFor = -1
-				rf.mu.Unlock()
+			rf.DPrintf("become follower from %s, event: %+v", rf.Role(), event)
+			rf.mu.Lock()
+			if rf.role == LEADER && rf.notLeaderCh != nil {
+				close(rf.notLeaderCh)
 			}
+			rf.currentTerm = event.term
+			rf.role = FOLLOWER
+			rf.electionTimeout = randomElectionTimeout()
+			rf.refreshTime = time.Now()
+			rf.votedFor = -1
+			rf.mu.Unlock()
 		case <-rf.doneServer:
 			return
 		}
@@ -375,12 +357,8 @@ func (rf *Raft) handleToCandidate() {
 			return
 		case <-rf.toCandidateCh:
 			switch rf.Role() {
-			case FOLLOWER:
+			case FOLLOWER, CANDIDATE:
 				// timeout, start election
-				rf.SetRefreshTime(time.Now())
-				rf.SetElectionTimeout(randomElectionTimeout())
-				rf.runElection()
-			case CANDIDATE:
 				// timeout, new election
 				rf.SetRefreshTime(time.Now())
 				rf.SetElectionTimeout(randomElectionTimeout())
@@ -404,6 +382,7 @@ func (rf *Raft) handleToLeader() {
 			case CANDIDATE:
 				rf.mu.Lock()
 				rf.role = LEADER
+				rf.notLeaderCh = make(chan struct{})
 				rf.mu.Unlock()
 				rf.initNextIndex()
 				rf.initMatchIndex()
