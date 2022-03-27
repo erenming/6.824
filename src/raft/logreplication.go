@@ -87,7 +87,7 @@ func (rf *Raft) checkAndCommit(srvList []int) {
 // 信号通道：一旦有server复制成功则发送一个信号
 func (rf *Raft) replica() chan int {
 	rf.mu.Lock()
-	rf.DPrintf("start replica, prevLog: %+v, cidx: %d", rf.logs[len(rf.logs)-1], rf.commitIndex)
+	// rf.DPrintf("start replica, prevLog: %+v, cidx: %d", rf.logs[len(rf.logs)-1], rf.commitIndex)
 	rf.mu.Unlock()
 	ch := make(chan int, len(rf.peers)-1)
 	var wg sync.WaitGroup
@@ -110,7 +110,6 @@ func (rf *Raft) replica() chan int {
 				// }()
 				return
 			}
-
 		}(idx)
 	}
 	go func() {
@@ -125,6 +124,7 @@ redo:
 	if rf.killed() || rf.Role() != LEADER {
 		return true
 	}
+	traceID := RandStringBytes()
 	rf.mu.Lock()
 	if len(rf.logs) < rf.nextIndex[srvID] {
 		rf.mu.Unlock()
@@ -139,6 +139,7 @@ redo:
 		Entries:      logs,
 		PrevLogIndex: prevLog.Index,
 		PrevLogTerm:  prevLog.Term,
+		TraceID:      traceID,
 	}
 	rf.mu.Unlock()
 	reply := AppendEntriesReply{}
@@ -166,7 +167,6 @@ redo:
 		rf.nextIndex[srvID] += toInc
 		rf.matchIndex[srvID] += toInc
 		rf.mu.Unlock()
-		rf.DPrintf("reply.Success, server: %d, add: %d", srvID, toInc)
 		if echoCh != nil {
 			echoCh <- srvID
 		}
@@ -177,7 +177,7 @@ redo:
 		rf.nextIndex[srvID]--
 		rf.matchIndex[srvID]--
 		rf.mu.Unlock()
-		rf.DPrintf("reply.Fail, server: %d", srvID)
+		// rf.DPrintf("reply.Fail, server: %d", srvID)
 		goto redo
 	}
 }

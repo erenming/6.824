@@ -63,6 +63,33 @@ func (le LogEntry) Equal(other LogEntry) bool {
 	return le.Term == other.Term && le.Index == other.Index
 }
 
+func (rf *Raft) Role() ServerRole {
+	val := rf.role.Load().(uint8)
+	switch val {
+	case 2:
+		return LEADER
+	case 1:
+		return CANDIDATE
+	case 0:
+		return FOLLOWER
+	default:
+		return FOLLOWER
+	}
+}
+
+func (rf *Raft) SetRole(role ServerRole) {
+	switch role {
+	case LEADER:
+		rf.role.Store(uint8(2))
+	case CANDIDATE:
+		rf.role.Store(uint8(1))
+	case FOLLOWER:
+		rf.role.Store(uint8(0))
+	default:
+		rf.role.Store(uint8(0))
+	}
+}
+
 //
 // A Go object implementing a single Raft peer.
 //
@@ -80,7 +107,8 @@ type Raft struct {
 	electionTimeout time.Duration
 
 	currentTerm, votedFor int
-	role                  ServerRole
+	// TODO. atomic
+	role atomic.Value
 
 	// doneHeartBeat chan struct{}
 	toFollowerCh  chan toFollowerEvent
@@ -162,24 +190,12 @@ func (rf *Raft) SetRefreshTime(refreshTime time.Time) {
 	rf.refreshTime = refreshTime
 }
 
-func (rf *Raft) Role() ServerRole {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	return rf.role
-}
-
-func (rf *Raft) SetRole(role ServerRole) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	rf.role = role
-}
-
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	return rf.currentTerm, rf.role == LEADER
+	return rf.currentTerm, rf.Role() == LEADER
 }
 
 //
@@ -273,7 +289,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.electionTimeout = randomElectionTimeout()
 	rf.refreshTime = time.Now()
 
-	rf.role = FOLLOWER
+	rf.SetRole(FOLLOWER)
 	rf.votedFor = -1
 
 	rf.logs = make([]LogEntry, 1)
@@ -308,15 +324,11 @@ func (rf *Raft) checkElectionTimeout() {
 		default:
 		}
 
-		if rf.Role() == LEADER {
-			continue
-		}
-
 		time.Sleep(5 * time.Millisecond)
 		rf.mu.Lock()
 		to := time.Since(rf.refreshTime) > rf.electionTimeout
 		rf.mu.Unlock()
-		if !to {
+		if rf.Role() == LEADER || !to {
 			continue
 		}
 		rf.toCandidateCh <- struct{}{}
@@ -333,13 +345,12 @@ func (rf *Raft) handleToFollower() {
 	for {
 		select {
 		case event := <-rf.toFollowerCh:
-			rf.DPrintf("become follower from %s, event: %+v", rf.Role(), event)
 			rf.mu.Lock()
-			if rf.role == LEADER && rf.notLeaderCh != nil {
+			if rf.Role() == LEADER && rf.notLeaderCh != nil {
 				close(rf.notLeaderCh)
 			}
 			rf.currentTerm = event.term
-			rf.role = FOLLOWER
+			rf.SetRole(FOLLOWER)
 			rf.electionTimeout = randomElectionTimeout()
 			rf.refreshTime = time.Now()
 			rf.votedFor = -1
@@ -380,8 +391,9 @@ func (rf *Raft) handleToLeader() {
 			case LEADER, FOLLOWER:
 				// impossible, then pass
 			case CANDIDATE:
+				rf.DPrintf("to leader")
 				rf.mu.Lock()
-				rf.role = LEADER
+				rf.SetRole(LEADER)
 				rf.notLeaderCh = make(chan struct{})
 				rf.mu.Unlock()
 				rf.initNextIndex()

@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"math/rand"
 	"time"
 )
 
@@ -10,11 +11,37 @@ type AppendEntriesArgs struct {
 	PrevLogIndex, PrevLogTerm int
 	Entries                   []LogEntry
 	LeaderCommit              int
+
+	// debug
+	TraceID string
 }
 
 type AppendEntriesReply struct {
 	Term    int
 	Success bool
+	TraceID string
+}
+
+func betterLogs(data []LogEntry) []interface{} {
+	res := make([]interface{}, len(data))
+	for i, item := range data {
+		res[i] = item.Command
+	}
+	return res
+}
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
+const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+func RandStringBytes() string {
+	b := make([]byte, 10)
+	for i := range b {
+		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+	}
+	return string(b)
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
@@ -36,6 +63,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	defer rf.mu.Unlock()
 	rf.currentTerm = args.Term
 	rf.refreshTime = time.Now()
+	reply.TraceID = args.TraceID
 
 	lastLog := rf.logs[len(rf.logs)-1]
 	if args.PrevLogIndex > lastLog.Index {
@@ -44,23 +72,29 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
+	// TODO Hanve problem
 	target := rf.logs[args.PrevLogIndex]
-	if target.Term != args.PrevLogTerm {
-		rf.logs = rf.logs[:args.PrevLogIndex]
+	if args.PrevLogIndex != target.Index || args.PrevLogTerm != target.Term {
 		reply.Term = rf.currentTerm
 		reply.Success = false
 		return
-	} else  {
-		rf.logs = rf.logs[:args.PrevLogIndex+1]
 	}
-	if len(args.Entries) > 0 {
-		rf.logs = append(rf.logs, args.Entries...)
+	// 检查并忽略之前的logReplica
+	toCheck := rf.logs[args.PrevLogIndex+1:]
+	if len(toCheck) > len(args.Entries) {
+		reply.Term = rf.currentTerm
+		reply.Success = true
+		return
 	}
+
+	// clean invalid log entries
+	rf.logs = rf.logs[:args.PrevLogIndex+1]
+	rf.logs = append(rf.logs, args.Entries...)
 
 	if args.LeaderCommit > rf.commitIndex {
 		// TODO, 不能直接apply
 		minIdx := min(args.LeaderCommit, len(rf.logs)-1)
-		rf.DPrintf("commit indx diff, %d, %d", rf.commitIndex, minIdx)
+		// rf.DPrintf("[%s]commit indx diff, %d, %d", args.TraceID, rf.commitIndex, minIdx)
 		for i := rf.commitIndex + 1; i <= minIdx; i++ {
 			rf.updateStateMachine(ApplyMsg{
 				CommandValid: true,
@@ -94,7 +128,7 @@ func (rf *Raft) broadcastAE() {
 		}
 		go func(server int) {
 			rf.mu.Lock()
-			prevLog := rf.logs[len(rf.logs)-1]
+			prevLog := rf.logs[rf.nextIndex[server]-1]
 			args := &AppendEntriesArgs{
 				Term:         rf.currentTerm,
 				LeaderId:     rf.me,
