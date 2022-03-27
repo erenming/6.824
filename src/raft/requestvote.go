@@ -67,7 +67,6 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 }
 
 func (rf *Raft) runElection() {
-	rf.DPrintf("start election")
 	rf.mu.Lock()
 	rf.SetRole(CANDIDATE)
 	rf.currentTerm++

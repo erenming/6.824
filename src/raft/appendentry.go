@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"math/rand"
 	"time"
 )
 
@@ -20,6 +19,10 @@ type AppendEntriesReply struct {
 	Term    int
 	Success bool
 	TraceID string
+	// Fast back up
+	XTerm  int // term of conflicting entry
+	XIndex int // index first entry of conflicting XTerm
+	XLen   int // length of follower's log
 }
 
 func betterLogs(data []LogEntry) []interface{} {
@@ -28,20 +31,6 @@ func betterLogs(data []LogEntry) []interface{} {
 		res[i] = item.Command
 	}
 	return res
-}
-
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
-
-const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-func RandStringBytes() string {
-	b := make([]byte, 10)
-	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
-	}
-	return string(b)
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
@@ -63,18 +52,32 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	defer rf.mu.Unlock()
 	rf.currentTerm = args.Term
 	rf.refreshTime = time.Now()
+
+	reply.XTerm = -1
+	reply.XIndex = -1
+	reply.XLen = -1
 	reply.TraceID = args.TraceID
 
 	lastLog := rf.logs[len(rf.logs)-1]
 	if args.PrevLogIndex > lastLog.Index {
+		// reply.XIndex = lastLog.Index+1
+
 		reply.Term = rf.currentTerm
 		reply.Success = false
 		return
 	}
 
-	// TODO Hanve problem
 	target := rf.logs[args.PrevLogIndex]
 	if args.PrevLogIndex != target.Index || args.PrevLogTerm != target.Term {
+		// reply.XTerm = target.Term
+		// j := target.Index
+		// for ; j >= 0; j-- {
+		// 	if rf.logs[j].Term != target.Term {
+		// 		break
+		// 	}
+		// }
+		// reply.XIndex = j+1
+
 		reply.Term = rf.currentTerm
 		reply.Success = false
 		return

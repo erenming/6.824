@@ -101,13 +101,6 @@ func (rf *Raft) replica() chan int {
 			defer wg.Done()
 			ok := rf.replicaServer(server, ch)
 			if !ok {
-				// network error, retry background forever
-				// go func() {
-				// 	for !rf.replicaServer(server, nil) {
-				// 		// decrease cpu
-				// 		time.Sleep(time.Millisecond * 100)
-				// 	}
-				// }()
 				return
 			}
 		}(idx)
@@ -174,6 +167,22 @@ redo:
 	} else {
 		// handle rejected AppendRPC
 		rf.mu.Lock()
+		// if reply.XIndex != -1 {
+		// 	rf.nextIndex[srvID] = reply.XIndex
+		// 	rf.matchIndex[srvID] = rf.nextIndex[srvID] - 1
+		// } else if reply.XTerm != -1 {
+		// 	firstConflict := rf.nextIndex[srvID]
+		// 	for ; firstConflict > 0; firstConflict-- {
+		// 		if rf.logs[firstConflict].Term != reply.Term {
+		// 			break
+		// 		}
+		// 	}
+		// 	rf.nextIndex[srvID] = firstConflict + 1
+		// 	rf.matchIndex[srvID] = rf.nextIndex[srvID] - 1
+		// } else {
+		// 	rf.nextIndex[srvID]--
+		// 	rf.matchIndex[srvID]--
+		// }
 		rf.nextIndex[srvID]--
 		rf.matchIndex[srvID]--
 		rf.mu.Unlock()

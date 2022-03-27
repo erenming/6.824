@@ -28,3 +28,17 @@ func randDuration(start, end time.Duration) time.Duration {
 func randomElectionTimeout() time.Duration {
 	return randDuration(300*time.Millisecond, 500*time.Millisecond)
 }
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
+const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+func RandStringBytes() string {
+	b := make([]byte, 10)
+	for i := range b {
+		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+	}
+	return string(b)
+}

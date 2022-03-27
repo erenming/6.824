@@ -64,30 +64,11 @@ func (le LogEntry) Equal(other LogEntry) bool {
 }
 
 func (rf *Raft) Role() ServerRole {
-	val := rf.role.Load().(uint8)
-	switch val {
-	case 2:
-		return LEADER
-	case 1:
-		return CANDIDATE
-	case 0:
-		return FOLLOWER
-	default:
-		return FOLLOWER
-	}
+	return rf.role.Load().(ServerRole)
 }
 
 func (rf *Raft) SetRole(role ServerRole) {
-	switch role {
-	case LEADER:
-		rf.role.Store(uint8(2))
-	case CANDIDATE:
-		rf.role.Store(uint8(1))
-	case FOLLOWER:
-		rf.role.Store(uint8(0))
-	default:
-		rf.role.Store(uint8(0))
-	}
+	rf.role.Store(role)
 }
 
 //
@@ -107,8 +88,7 @@ type Raft struct {
 	electionTimeout time.Duration
 
 	currentTerm, votedFor int
-	// TODO. atomic
-	role atomic.Value
+	role                  atomic.Value
 
 	// doneHeartBeat chan struct{}
 	toFollowerCh  chan toFollowerEvent
