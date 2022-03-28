@@ -247,7 +247,7 @@ func TestFailNoAgree2B(t *testing.T) {
 }
 
 func TestConcurrentStarts2B(t *testing.T) {
-	t.SkipNow()
+	// t.SkipNow()
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -349,7 +349,7 @@ loop:
 }
 
 func TestRejoin2B(t *testing.T) {
-	// t.SkipNow()
+	t.SkipNow()
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -388,7 +388,7 @@ func TestRejoin2B(t *testing.T) {
 }
 
 func TestBackup2B(t *testing.T) {
-	// t.SkipNow()
+	t.SkipNow()
 	servers := 5
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -461,6 +461,7 @@ func TestBackup2B(t *testing.T) {
 }
 
 func TestCount2B(t *testing.T) {
+	t.SkipNow()
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()

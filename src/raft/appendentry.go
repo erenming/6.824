@@ -93,11 +93,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// clean invalid log entries
 	rf.logs = rf.logs[:args.PrevLogIndex+1]
 	rf.logs = append(rf.logs, args.Entries...)
+	if len(args.Entries) > 0 {
+		rf.DPrintf("[%s]args.Entries: %+v, rf.logs: %+v", args.TraceID, betterLogs(args.Entries), betterLogs(rf.logs))
+	}
 
 	if args.LeaderCommit > rf.commitIndex {
 		// TODO, 不能直接apply
 		minIdx := min(args.LeaderCommit, len(rf.logs)-1)
-		// rf.DPrintf("[%s]commit indx diff, %d, %d", args.TraceID, rf.commitIndex, minIdx)
+		rf.DPrintf("[%s]commit indx diff, %d, %d", args.TraceID, rf.commitIndex, minIdx)
 		for i := rf.commitIndex + 1; i <= minIdx; i++ {
 			rf.updateStateMachine(ApplyMsg{
 				CommandValid: true,
@@ -106,6 +109,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			})
 		}
 		rf.commitIndex = minIdx
+		rf.DPrintf("lastApplied: %d", rf.lastApplied)
 	}
 
 	reply.Term = rf.currentTerm

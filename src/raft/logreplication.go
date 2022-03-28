@@ -3,6 +3,7 @@ package raft
 import (
 	"math"
 	"sync"
+	"time"
 )
 
 //
@@ -24,17 +25,46 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return -1, -1, false
 	}
 
-	// 1. apply
+	// 1. append
 	rf.mu.Lock()
 	le := LogEntry{
 		Index:   len(rf.logs),
 		Command: command,
 		Term:    rf.currentTerm,
 	}
-	rf.logs = append(rf.logs, le)
 	latestIndex := len(rf.logs) - 1
 	rf.mu.Unlock()
 
+	rf.appendCh <- le
+
+	return latestIndex, rf.CurrentTerm(), true
+}
+
+func (rf *Raft) logReplicaLoop() {
+	for {
+		select {
+		case <-rf.doneServer:
+			rf.replicaLog()
+		case le := <-rf.appendCh:
+			rf.mu.Lock()
+			// le := LogEntry{
+			// 	Index:   len(rf.logs),
+			// 	Command: command,
+			// 	Term:    rf.currentTerm,
+			// }
+			rf.logs = append(rf.logs, le)
+			triggerd := (len(rf.logs) - rf.commitIndex) > 10
+			rf.mu.Unlock()
+			if triggerd {
+				rf.replicaLog()
+			}
+		case <-time.After(time.Second):
+			rf.replicaLog()
+		}
+	}
+}
+
+func (rf *Raft) replicaLog() {
 	// 2. replica logEntry to followers
 	ch := rf.replica()
 	srvList := []int{}
@@ -44,20 +74,20 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	for {
 		select {
 		case <-rf.notLeaderCh:
-			return -1, -1, false
+			return
 		case srvID, ok := <-ch:
 			if !ok {
-				return latestIndex, rf.CurrentTerm(), true
+				return
 			}
 
 			cnt++
 			srvList = append(srvList, srvID)
 			if cnt >= n/2+n%2 { // majority
 				rf.checkAndCommit(srvList)
-				return latestIndex, rf.CurrentTerm(), true
+				return
 			}
 		case <-rf.doneServer:
-			return latestIndex, rf.CurrentTerm(), true
+			return
 		}
 	}
 }
@@ -124,6 +154,11 @@ redo:
 		return true
 	}
 	logs := rf.logs[rf.nextIndex[srvID]:]
+	if len(logs) == 0 {
+		rf.mu.Unlock()
+		return true
+	}
+	rf.DPrintf("[%s]send replica, %+v, %+v", traceID, betterLogs(logs), betterLogs(rf.logs))
 	prevLog := rf.logs[rf.nextIndex[srvID]-1]
 	args := &AppendEntriesArgs{
 		Term:         rf.currentTerm,

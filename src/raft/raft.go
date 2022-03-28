@@ -107,8 +107,9 @@ type Raft struct {
 	commitIndex int
 	matchIndex  []int
 
-	debugMu sync.Mutex
-	applyCh chan ApplyMsg
+	debugMu  sync.Mutex
+	applyCh  chan ApplyMsg
+	appendCh chan LogEntry
 }
 
 type toFollowerEvent struct {
@@ -284,9 +285,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.toLeaderCh = make(chan struct{})
 	rf.notLeaderCh = make(chan struct{})
 	rf.doneServer = make(chan struct{})
+	rf.appendCh = make(chan LogEntry)
 	rf.eventLoop()
 
 	go rf.checkElectionTimeout()
+	go rf.logReplicaLoop()
 
 	return rf
 }
