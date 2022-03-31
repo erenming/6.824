@@ -59,13 +59,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	target := rf.logs[args.PrevLogIndex]
 	if args.PrevLogIndex != target.Index || args.PrevLogTerm != target.Term {
+		rf.DPrintf("not matched")
 		reply.Term = rf.currentTerm
 		reply.Success = false
 		return
 	}
 	// 检查并忽略之前的logReplica
-	toCheck := rf.logs[args.PrevLogIndex+1:]
-	if len(toCheck) > len(args.Entries) {
+	if len(args.Entries) > 0 && isOldLogReplica(rf.logs, args.Entries) {
 		reply.Term = rf.currentTerm
 		reply.Success = true
 		rf.DPrintf("ignore old rpc. <%+v, %+v>", betterLogs(rf.logs[args.PrevLogIndex+1:]), betterLogs(args.Entries))
@@ -77,9 +77,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.logs = append(rf.logs, args.Entries...)
 
 	if args.LeaderCommit > rf.commitIndex {
-		// TODO, 不能直接apply
 		minIdx := min(args.LeaderCommit, len(rf.logs)-1)
-		rf.DPrintf("[%s]commit indx diff, %d, %d, %+v", args.TraceID, rf.commitIndex, minIdx, betterLogs(rf.logs))
+		rf.DPrintf("[%s]commit indx diff, <%d, %d>", args.TraceID, rf.commitIndex, minIdx)
 		for i := rf.commitIndex + 1; i <= minIdx; i++ {
 			rf.updateStateMachine(ApplyMsg{
 				CommandValid: true,
@@ -147,4 +146,29 @@ func (rf *Raft) reqAppendRPC(server int, args AppendEntriesArgs) (AppendEntriesR
 		return reply, false
 	}
 	return reply, true
+}
+
+func isOldLogReplica(logs, entries []LogEntry) bool {
+	if len(entries) == 0 {
+		return true
+	}
+	toCompare := logs[entries[0].Index:]
+	i := 0
+	for ; i < len(toCompare) && i < len(entries); i++ {
+		src, dst := entries[i], toCompare[i]
+		if src.Equal(dst) {
+			continue
+		}
+
+		if src.Term < dst.Term {
+			return true
+		} else {
+			return true
+		}
+
+	}
+	if i == len(toCompare) {
+		return false
+	}
+	return true
 }

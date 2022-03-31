@@ -89,6 +89,7 @@ func (rf *Raft) replica() {
 				PrevLogTerm:  prevLog.Term,
 				TraceID:      traceID,
 			}
+			rf.DPrintf("[%s]replica to %d, <%d, %d> %+v %+v", args.TraceID, server, args.PrevLogTerm, args.PrevLogIndex, betterLogs(rf.logs), betterLogs(args.Entries))
 			rf.mu.Unlock()
 			reply, ok := rf.reqAppendRPC(server, args)
 			if !ok {
