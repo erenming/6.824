@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -35,8 +36,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if rf.Role() != FOLLOWER {
 		rf.toFollowerCh <- toFollowerEvent{
-			term:   args.Term,
-			server: rf.me,
+			term:    args.Term,
+			server:  rf.me,
+			traceID: args.TraceID,
 		}
 	}
 
@@ -59,7 +61,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	target := rf.logs[args.PrevLogIndex]
 	if args.PrevLogIndex != target.Index || args.PrevLogTerm != target.Term {
-		rf.DPrintf("not matched")
+		// rf.DPrintf("not matched")
 		reply.Term = rf.currentTerm
 		reply.Success = false
 		return
@@ -68,13 +70,17 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if len(args.Entries) > 0 && isOldLogReplica(rf.logs, args.Entries) {
 		reply.Term = rf.currentTerm
 		reply.Success = true
-		rf.DPrintf("ignore old rpc. <%+v, %+v>", betterLogs(rf.logs[args.PrevLogIndex+1:]), betterLogs(args.Entries))
+		rf.DPrintf("ignore old rpc. <%+v, %+v>", betterLogs(rf.logs), betterLogs(args.Entries))
 		return
 	}
 
-	// clean invalid log entries
-	rf.logs = rf.logs[:args.PrevLogIndex+1]
-	rf.logs = append(rf.logs, args.Entries...)
+	if len(args.Entries) > 0 {
+		rf.DPrintf("[%s]rewrite, <%d, %d>, %+v, %+v", args.TraceID, args.PrevLogTerm, args.PrevLogIndex, betterLogs(rf.logs), betterLogs(args.Entries))
+		// clean invalid log entries
+		rf.logs = rf.logs[:args.PrevLogIndex+1]
+		rf.logs = append(rf.logs, args.Entries...)
+		rf.DPrintf("[%s]after-rewrite, %+v", args.TraceID, betterLogs(rf.logs))
+	}
 
 	if args.LeaderCommit > rf.commitIndex {
 		minIdx := min(args.LeaderCommit, len(rf.logs)-1)
@@ -114,6 +120,7 @@ func (rf *Raft) broadcastAE() {
 			rf.mu.Lock()
 			prevLog := rf.logs[rf.nextIndex[server]-1]
 			args := AppendEntriesArgs{
+				TraceID:      RandStringBytes(),
 				Term:         rf.currentTerm,
 				LeaderId:     rf.me,
 				LeaderCommit: rf.commitIndex,
@@ -129,8 +136,9 @@ func (rf *Raft) broadcastAE() {
 
 			if reply.Term > rf.CurrentTerm() {
 				rf.toFollowerCh <- toFollowerEvent{
-					term:   reply.Term,
-					server: rf.me,
+					term:    reply.Term,
+					server:  rf.me,
+					traceID: args.TraceID,
 				}
 				return
 			}
@@ -152,7 +160,7 @@ func isOldLogReplica(logs, entries []LogEntry) bool {
 	if len(entries) == 0 {
 		return true
 	}
-	toCompare := logs[entries[0].Index:]
+	toCompare := logs[logs[0].Index:]
 	i := 0
 	for ; i < len(toCompare) && i < len(entries); i++ {
 		src, dst := entries[i], toCompare[i]
@@ -161,13 +169,16 @@ func isOldLogReplica(logs, entries []LogEntry) bool {
 		}
 
 		if src.Term < dst.Term {
+			fmt.Println(0)
 			return true
 		} else {
-			return true
+			fmt.Println(1)
+			return false
 		}
 
 	}
 	if i == len(toCompare) {
+		fmt.Println(2)
 		return false
 	}
 	return true
