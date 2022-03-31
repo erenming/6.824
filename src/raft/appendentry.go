@@ -25,14 +25,6 @@ type AppendEntriesReply struct {
 	XLen   int // length of follower's log
 }
 
-func betterLogs(data []LogEntry) []interface{} {
-	res := make([]interface{}, len(data))
-	for i, item := range data {
-		res[i] = item.Command
-	}
-	return res
-}
-
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	// Your code here (2A, 2B).
 	if args.Term < rf.CurrentTerm() {
@@ -60,8 +52,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	lastLog := rf.logs[len(rf.logs)-1]
 	if args.PrevLogIndex > lastLog.Index {
-		// reply.XIndex = lastLog.Index+1
-
 		reply.Term = rf.currentTerm
 		reply.Success = false
 		return
@@ -69,15 +59,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	target := rf.logs[args.PrevLogIndex]
 	if args.PrevLogIndex != target.Index || args.PrevLogTerm != target.Term {
-		// reply.XTerm = target.Term
-		// j := target.Index
-		// for ; j >= 0; j-- {
-		// 	if rf.logs[j].Term != target.Term {
-		// 		break
-		// 	}
-		// }
-		// reply.XIndex = j+1
-
 		reply.Term = rf.currentTerm
 		reply.Success = false
 		return
@@ -87,6 +68,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if len(toCheck) > len(args.Entries) {
 		reply.Term = rf.currentTerm
 		reply.Success = true
+		rf.DPrintf("ignore old rpc. <%+v, %+v>", betterLogs(rf.logs[args.PrevLogIndex+1:]), betterLogs(args.Entries))
 		return
 	}
 
@@ -97,7 +79,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.LeaderCommit > rf.commitIndex {
 		// TODO, 不能直接apply
 		minIdx := min(args.LeaderCommit, len(rf.logs)-1)
-		// rf.DPrintf("[%s]commit indx diff, %d, %d", args.TraceID, rf.commitIndex, minIdx)
+		rf.DPrintf("[%s]commit indx diff, %d, %d, %+v", args.TraceID, rf.commitIndex, minIdx, betterLogs(rf.logs))
 		for i := rf.commitIndex + 1; i <= minIdx; i++ {
 			rf.updateStateMachine(ApplyMsg{
 				CommandValid: true,
@@ -132,7 +114,7 @@ func (rf *Raft) broadcastAE() {
 		go func(server int) {
 			rf.mu.Lock()
 			prevLog := rf.logs[rf.nextIndex[server]-1]
-			args := &AppendEntriesArgs{
+			args := AppendEntriesArgs{
 				Term:         rf.currentTerm,
 				LeaderId:     rf.me,
 				LeaderCommit: rf.commitIndex,
@@ -141,8 +123,7 @@ func (rf *Raft) broadcastAE() {
 			}
 			rf.mu.Unlock()
 
-			reply := AppendEntriesReply{}
-			ok := rf.sendAppendEntries(server, args, &reply)
+			reply, ok := rf.reqAppendRPC(server, args)
 			if !ok {
 				return
 			}
@@ -157,4 +138,13 @@ func (rf *Raft) broadcastAE() {
 
 		}(idx)
 	}
+}
+
+func (rf *Raft) reqAppendRPC(server int, args AppendEntriesArgs) (AppendEntriesReply, bool) {
+	reply := AppendEntriesReply{}
+	ok := rf.sendAppendEntries(server, &args, &reply)
+	if !ok {
+		return reply, false
+	}
+	return reply, true
 }

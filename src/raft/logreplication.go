@@ -1,8 +1,7 @@
 package raft
 
 import (
-	"math"
-	"sync"
+	"sync/atomic"
 )
 
 //
@@ -24,7 +23,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return -1, -1, false
 	}
 
-	// 1. apply
 	rf.mu.Lock()
 	le := LogEntry{
 		Index:   len(rf.logs),
@@ -35,158 +33,108 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	latestIndex := len(rf.logs) - 1
 	rf.mu.Unlock()
 
-	// 2. replica logEntry to followers
-	ch := rf.replica()
-	srvList := []int{}
-
-	// 2. handle Request&Response
-	cnt, n := 1, len(rf.peers)
-	for {
-		select {
-		case <-rf.notLeaderCh:
-			return -1, -1, false
-		case srvID, ok := <-ch:
-			if !ok {
-				return latestIndex, rf.CurrentTerm(), true
-			}
-
-			cnt++
-			srvList = append(srvList, srvID)
-			if cnt >= n/2+n%2 { // majority
-				rf.checkAndCommit(srvList)
-				return latestIndex, rf.CurrentTerm(), true
-			}
-		case <-rf.doneServer:
-			return latestIndex, rf.CurrentTerm(), true
-		}
-	}
+	go rf.replica()
+	return latestIndex, rf.CurrentTerm(), true
 }
 
-func (rf *Raft) checkAndCommit(srvList []int) {
+func (rf *Raft) checkAndCommit() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if rf.commitIndex == len(rf.logs)-1 {
-		return
+	m := make(map[int]int)
+	for _, matchedIdx := range rf.matchIndex {
+		m[matchedIdx]++
 	}
-	newCommitIndex := math.MaxInt64
-	for _, srv := range srvList {
-		if rf.matchIndex[srv] < newCommitIndex {
-			newCommitIndex = rf.matchIndex[srv]
+	toCommit := -1
+	for k, v := range m {
+		if isMajority(v, len(rf.peers)) && k > toCommit {
+			toCommit = k
 		}
 	}
-	for i := rf.commitIndex + 1; i <= newCommitIndex; i++ {
+	if toCommit <= rf.commitIndex {
+		return
+	}
+	for i := rf.commitIndex + 1; i <= toCommit; i++ {
 		rf.updateStateMachine(ApplyMsg{
 			CommandValid: true,
 			Command:      rf.logs[i].Command,
 			CommandIndex: i,
 		})
 	}
-	rf.commitIndex = newCommitIndex
+	rf.commitIndex = toCommit
 }
 
 // 信号通道：一旦有server复制成功则发送一个信号
-func (rf *Raft) replica() chan int {
-	rf.mu.Lock()
-	// rf.DPrintf("start replica, prevLog: %+v, cidx: %d", rf.logs[len(rf.logs)-1], rf.commitIndex)
-	rf.mu.Unlock()
-	ch := make(chan int, len(rf.peers)-1)
-	var wg sync.WaitGroup
-	wg.Add(len(rf.peers) - 1)
+func (rf *Raft) replica() {
+	cnt := uint64(0)
 	for idx, _ := range rf.peers {
 		if idx == rf.me {
 			continue
 		}
 
 		go func(server int) {
-			defer wg.Done()
-			ok := rf.replicaServer(server, ch)
-			if !ok {
+		redo:
+			if rf.killed() || rf.Role() != LEADER {
 				return
 			}
+			traceID := RandStringBytes()
+			rf.mu.Lock()
+			logs := rf.logs[rf.nextIndex[server]:]
+			prevLog := rf.logs[rf.nextIndex[server]-1]
+			args := AppendEntriesArgs{
+				Term:         rf.currentTerm,
+				LeaderId:     rf.me,
+				LeaderCommit: rf.commitIndex,
+				Entries:      logs,
+				PrevLogIndex: prevLog.Index,
+				PrevLogTerm:  prevLog.Term,
+				TraceID:      traceID,
+			}
+			rf.mu.Unlock()
+			reply, ok := rf.reqAppendRPC(server, args)
+			if !ok {
+				goto redo
+			}
+
+			if reply.Term > rf.CurrentTerm() {
+				rf.toFollowerCh <- toFollowerEvent{
+					term:   reply.Term,
+					server: rf.me,
+				}
+				return
+			}
+
+			if !reply.Success {
+				// handle rejected AppendRPC
+				rf.mu.Lock()
+				rf.nextIndex[server]--
+				rf.matchIndex[server]--
+				rf.mu.Unlock()
+				goto redo
+			}
+
+			// handle nextIndex&matchIndex
+			rf.mu.Lock()
+			curPrefLog := rf.logs[rf.nextIndex[server]-1]
+			if curPrefLog.Index != args.PrevLogIndex || curPrefLog.Term != args.PrevLogTerm {
+				// old appendRPC reply received, then ignore
+				rf.mu.Unlock()
+				return
+			}
+			rf.nextIndex[server] += len(logs)
+			rf.matchIndex[server] += len(logs)
+			rf.mu.Unlock()
+
+			atomic.AddUint64(&cnt, 1)
+			if !isMajority(int(atomic.LoadUint64(&cnt)), len(rf.peers)) {
+				return
+			}
+
+			rf.checkAndCommit()
 		}(idx)
 	}
-	go func() {
-		wg.Wait()
-		close(ch)
-	}()
-	return ch
 }
 
-func (rf *Raft) replicaServer(srvID int, echoCh chan int) bool {
-redo:
-	if rf.killed() || rf.Role() != LEADER {
-		return true
-	}
-	traceID := RandStringBytes()
-	rf.mu.Lock()
-	if len(rf.logs) < rf.nextIndex[srvID] {
-		rf.mu.Unlock()
-		return true
-	}
-	logs := rf.logs[rf.nextIndex[srvID]:]
-	prevLog := rf.logs[rf.nextIndex[srvID]-1]
-	args := &AppendEntriesArgs{
-		Term:         rf.currentTerm,
-		LeaderId:     rf.me,
-		LeaderCommit: rf.commitIndex,
-		Entries:      logs,
-		PrevLogIndex: prevLog.Index,
-		PrevLogTerm:  prevLog.Term,
-		TraceID:      traceID,
-	}
-	rf.mu.Unlock()
-	reply := AppendEntriesReply{}
-	ok := rf.sendAppendEntries(srvID, args, &reply)
-	if !ok {
-		return false
-	}
-
-	if reply.Term > rf.CurrentTerm() {
-		rf.toFollowerCh <- toFollowerEvent{
-			term:   reply.Term,
-			server: rf.me,
-		}
-		return true
-	}
-
-	if reply.Success {
-		rf.mu.Lock()
-		toInc := 0
-		for i := len(logs) - 1; i >= 0; i-- {
-			if logs[i].Index >= rf.nextIndex[srvID] {
-				toInc++
-			}
-		}
-		rf.nextIndex[srvID] += toInc
-		rf.matchIndex[srvID] += toInc
-		rf.mu.Unlock()
-		if echoCh != nil {
-			echoCh <- srvID
-		}
-		return true
-	} else {
-		// handle rejected AppendRPC
-		rf.mu.Lock()
-		// if reply.XIndex != -1 {
-		// 	rf.nextIndex[srvID] = reply.XIndex
-		// 	rf.matchIndex[srvID] = rf.nextIndex[srvID] - 1
-		// } else if reply.XTerm != -1 {
-		// 	firstConflict := rf.nextIndex[srvID]
-		// 	for ; firstConflict > 0; firstConflict-- {
-		// 		if rf.logs[firstConflict].Term != reply.Term {
-		// 			break
-		// 		}
-		// 	}
-		// 	rf.nextIndex[srvID] = firstConflict + 1
-		// 	rf.matchIndex[srvID] = rf.nextIndex[srvID] - 1
-		// } else {
-		// 	rf.nextIndex[srvID]--
-		// 	rf.matchIndex[srvID]--
-		// }
-		rf.nextIndex[srvID]--
-		rf.matchIndex[srvID]--
-		rf.mu.Unlock()
-		// rf.DPrintf("reply.Fail, server: %d", srvID)
-		goto redo
-	}
+func isMajority(cnt int, total int) bool {
+	cnt++ // include leader self
+	return cnt >= total/2+total%2
 }
