@@ -26,7 +26,7 @@ func randDuration(start, end time.Duration) time.Duration {
 }
 
 func randomElectionTimeout() time.Duration {
-	return randDuration(300*time.Millisecond, 500*time.Millisecond)
+	return randDuration(150*time.Millisecond, 700*time.Millisecond)
 }
 
 func init() {

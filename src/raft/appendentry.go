@@ -25,7 +25,6 @@ type AppendEntriesReply struct {
 	XLen   int // length of follower's log
 }
 
-
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	// Your code here (2A, 2B).
 	if args.Term < rf.CurrentTerm() {
@@ -69,10 +68,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if len(args.Entries) > 0 {
 		// 检查并忽略之前的logReplica
 		toCheck := rf.logs[args.PrevLogIndex+1:]
-		if len(toCheck) > len(args.Entries) {
+		if len(toCheck) >= len(args.Entries) {
 			reply.Term = rf.currentTerm
 			reply.Success = true
-			// rf.DPrintf("ignore old rpc. <%+v, %+v>", betterLogs(toCheck), betterLogs(args.Entries))
+			rf.DPrintf("ignore old rpc. <%+v, %+v>", betterLogs(toCheck), betterLogs(args.Entries))
 			return
 		}
 
@@ -80,7 +79,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.logs = rf.logs[:args.PrevLogIndex+1]
 		rf.logs = append(rf.logs, args.Entries...)
 	}
-
 
 	if args.LeaderCommit > rf.commitIndex {
 		// TODO, 不能直接apply
