@@ -65,25 +65,31 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	// is logReplica RPC
+	existed := true
 	if len(args.Entries) > 0 {
 		// 检查并忽略之前的logReplica
-		toCheck := rf.logs[args.PrevLogIndex+1:]
-		if len(toCheck) >= len(args.Entries) {
-			reply.Term = rf.currentTerm
-			reply.Success = true
-			rf.DPrintf("ignore old rpc. <%+v, %+v>", betterLogs(toCheck), betterLogs(args.Entries))
-			return
+		for _, item := range args.Entries {
+			if item.Index > lastLog.Index || !item.Equal(rf.logs[item.Index]) {
+				existed = false
+				break
+			}
 		}
-
-		// clean invalid log entries
-		rf.logs = rf.logs[:args.PrevLogIndex+1]
-		rf.logs = append(rf.logs, args.Entries...)
 	}
+	if len(args.Entries) > 0 && existed {
+		reply.Term = rf.currentTerm
+		reply.Success = true
+		rf.DPrintf("ignore old rpc. <%+v, %+v>", betterLogs(rf.logs[args.PrevLogIndex+1:]), betterLogs(args.Entries))
+		return
+	}
+
+	// clean invalid log entries
+	rf.logs = rf.logs[:args.PrevLogIndex+1]
+	rf.logs = append(rf.logs, args.Entries...)
 
 	if args.LeaderCommit > rf.commitIndex {
 		// TODO, 不能直接apply
 		minIdx := min(args.LeaderCommit, len(rf.logs)-1)
-		rf.DPrintf("[%s]commit indx diff, %d, %d", args.TraceID, rf.commitIndex, minIdx)
+		rf.DPrintf("[%s]commit indx diff, %d, %d, %+v", args.TraceID, rf.commitIndex, minIdx, betterLogs(rf.logs))
 		for i := rf.commitIndex + 1; i <= minIdx; i++ {
 			rf.updateStateMachine(ApplyMsg{
 				CommandValid: true,
