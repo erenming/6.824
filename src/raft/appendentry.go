@@ -40,7 +40,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			server:  rf.me,
 			traceID: args.TraceID,
 		}
-		return
 	}
 
 	rf.mu.Lock()
@@ -76,17 +75,16 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	if len(args.Entries) > 0 {
-		rf.DPrintf("[%s]rewrite, <%d, %d>, %+v, %+v", args.TraceID, args.PrevLogTerm, args.PrevLogIndex, betterLogs(rf.logs), betterLogs(args.Entries))
+		// rf.DPrintf("[%s]rewrite, <%d, %d>, %+v, %+v", args.TraceID, args.PrevLogTerm, args.PrevLogIndex, betterLogs(rf.logs), betterLogs(args.Entries))
 		// clean invalid log entries
 		rf.logs = rf.logs[:args.PrevLogIndex+1]
 		rf.logs = append(rf.logs, args.Entries...)
-		rf.DPrintf("[%s]after-rewrite, %+v", args.TraceID, betterLogs(rf.logs))
+		// rf.DPrintf("[%s]after-rewrite, %+v", args.TraceID, betterLogs(rf.logs))
 	}
 
 	if args.LeaderCommit > rf.commitIndex {
 		minIdx := min(args.LeaderCommit, len(rf.logs)-1)
-		rf.DPrintf("[%s]commit indx diff, <%d, %d>, term: %d", args.TraceID, rf.commitIndex, minIdx, rf.currentTerm)
-		rf.DPrintf("[%s]prev <%d, %d>", args.TraceID, args.PrevLogTerm, args.PrevLogIndex)
+		// rf.DPrintf("[%s]commit indx diff, <%d, %d>, term: %d", args.TraceID, rf.commitIndex, minIdx, rf.currentTerm)
 		i := rf.commitIndex + 1
 		for ; i <= minIdx; i++ {
 			cur := rf.logs[i]
@@ -144,7 +142,7 @@ func (rf *Raft) broadcastAppendRPC(retry bool) {
 				TraceID:      traceID,
 			}
 			if retry {
-				rf.DPrintf("[%s]replica to %d, <%d, %d>, entries: %+v", args.TraceID, server, args.PrevLogTerm, args.PrevLogIndex, betterLogs(args.Entries))
+				// rf.DPrintf("[%s]replica to %d, <%d, %d>, entries: %+v", args.TraceID, server, args.PrevLogTerm, args.PrevLogIndex, betterLogs(args.Entries))
 			}
 			rf.mu.Unlock()
 			reply, ok := rf.reqAppendRPC(server, args)
