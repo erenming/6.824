@@ -43,10 +43,11 @@ func RandStringBytes() string {
 	return string(b)
 }
 
-func betterLogs(data []LogEntry) []interface{} {
-	res := make([]interface{}, len(data))
+
+func betterLogs(data []LogEntry) [][]interface{} {
+	res := make([][]interface{}, len(data))
 	for i, item := range data {
-		res[i] = item.Command
+		res[i] = []interface{}{item.Command, item.Term}
 	}
 	return res
 }

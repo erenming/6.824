@@ -112,8 +112,9 @@ type Raft struct {
 }
 
 type toFollowerEvent struct {
-	term   int
-	server int
+	term    int
+	server  int
+	traceID string
 }
 
 func (rf *Raft) NextIndex() []int {
@@ -325,6 +326,7 @@ func (rf *Raft) handleToFollower() {
 	for {
 		select {
 		case event := <-rf.toFollowerCh:
+			rf.DPrintf("[%s]to follower, term: %d, server: %d", event.traceID, event.term, event.server)
 			rf.mu.Lock()
 			if rf.Role() == LEADER && rf.notLeaderCh != nil {
 				close(rf.notLeaderCh)

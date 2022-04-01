@@ -34,7 +34,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.mu.Unlock()
 
 	go rf.replica()
-
 	return latestIndex, rf.CurrentTerm(), true
 }
 
@@ -90,6 +89,7 @@ func (rf *Raft) replica() {
 				PrevLogTerm:  prevLog.Term,
 				TraceID:      traceID,
 			}
+
 			rf.mu.Unlock()
 			reply, ok := rf.reqAppendRPC(server, args)
 			if !ok {
@@ -98,8 +98,10 @@ func (rf *Raft) replica() {
 
 			if reply.Term > rf.CurrentTerm() {
 				rf.toFollowerCh <- toFollowerEvent{
-					term:   reply.Term,
-					server: rf.me,
+
+					term:    reply.Term,
+					server:  rf.me,
+					traceID: args.TraceID,
 				}
 				return
 			}
