@@ -326,8 +326,8 @@ func (rf *Raft) handleToFollower() {
 	for {
 		select {
 		case event := <-rf.toFollowerCh:
-			rf.DPrintf("[%s]to follower, term: %d, server: %d", event.traceID, event.term, event.server)
 			rf.mu.Lock()
+			rf.DPrintf("[%s]to follower, term: %d, server: %d, logs: %+v", event.traceID, event.term, event.server, betterLogs(rf.logs))
 			if rf.Role() == LEADER && rf.notLeaderCh != nil {
 				close(rf.notLeaderCh)
 			}
@@ -373,8 +373,8 @@ func (rf *Raft) handleToLeader() {
 			case LEADER, FOLLOWER:
 				// impossible, then pass
 			case CANDIDATE:
-				rf.DPrintf("to leader")
 				rf.mu.Lock()
+				rf.DPrintf("to leader, %+v", betterLogs(rf.logs))
 				rf.SetRole(LEADER)
 				rf.notLeaderCh = make(chan struct{})
 				rf.mu.Unlock()
@@ -416,6 +416,6 @@ func (rf *Raft) runHeartBeat() {
 			break
 		}
 		time.Sleep(rf.ElectionTimeout() / 10)
-		rf.broadcastAE()
+		rf.broadcastAppendRPC(false)
 	}
 }

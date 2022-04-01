@@ -1,7 +1,7 @@
 package raft
 
 import (
-	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -40,6 +40,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			server:  rf.me,
 			traceID: args.TraceID,
 		}
+		return
 	}
 
 	rf.mu.Lock()
@@ -84,15 +85,21 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if args.LeaderCommit > rf.commitIndex {
 		minIdx := min(args.LeaderCommit, len(rf.logs)-1)
-		rf.DPrintf("[%s]commit indx diff, <%d, %d>", args.TraceID, rf.commitIndex, minIdx)
-		for i := rf.commitIndex + 1; i <= minIdx; i++ {
+		rf.DPrintf("[%s]commit indx diff, <%d, %d>, term: %d", args.TraceID, rf.commitIndex, minIdx, rf.currentTerm)
+		rf.DPrintf("[%s]prev <%d, %d>", args.TraceID, args.PrevLogTerm, args.PrevLogIndex)
+		i := rf.commitIndex + 1
+		for ; i <= minIdx; i++ {
+			cur := rf.logs[i]
+			if args.PrevLogTerm < cur.Term {
+				break
+			}
 			rf.updateStateMachine(ApplyMsg{
 				CommandValid: true,
-				Command:      rf.logs[i].Command,
+				Command:      cur.Command,
 				CommandIndex: i,
 			})
 		}
-		rf.commitIndex = minIdx
+		rf.commitIndex = i - 1
 	}
 
 	reply.Term = rf.currentTerm
@@ -111,28 +118,42 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return rf.peers[server].Call("Raft.AppendEntries", args, reply)
 }
 
-func (rf *Raft) broadcastAE() {
+func (rf *Raft) broadcastAppendRPC(retry bool) {
+	cnt := uint64(0)
 	for idx, _ := range rf.peers {
 		if idx == rf.me {
 			continue
 		}
+
 		go func(server int) {
+		redo:
+			if rf.killed() || rf.Role() != LEADER {
+				return
+			}
+			traceID := RandStringBytes()
 			rf.mu.Lock()
+			logs := rf.logs[rf.nextIndex[server]:]
 			prevLog := rf.logs[rf.nextIndex[server]-1]
 			args := AppendEntriesArgs{
-
-				TraceID:      RandStringBytes(),
 				Term:         rf.currentTerm,
 				LeaderId:     rf.me,
 				LeaderCommit: rf.commitIndex,
+				Entries:      logs,
 				PrevLogIndex: prevLog.Index,
 				PrevLogTerm:  prevLog.Term,
+				TraceID:      traceID,
+			}
+			if retry {
+				rf.DPrintf("[%s]replica to %d, <%d, %d>, entries: %+v", args.TraceID, server, args.PrevLogTerm, args.PrevLogIndex, betterLogs(args.Entries))
 			}
 			rf.mu.Unlock()
-
 			reply, ok := rf.reqAppendRPC(server, args)
 			if !ok {
-				return
+				if retry {
+					goto redo
+				} else {
+					return
+				}
 			}
 
 			if reply.Term > rf.CurrentTerm() {
@@ -144,6 +165,37 @@ func (rf *Raft) broadcastAE() {
 				return
 			}
 
+			if !reply.Success {
+				// handle rejected AppendRPC
+				rf.mu.Lock()
+				rf.nextIndex[server]--
+				rf.matchIndex[server]--
+				rf.mu.Unlock()
+				if retry {
+					goto redo
+				} else {
+					return
+				}
+			}
+
+			// handle nextIndex&matchIndex
+			rf.mu.Lock()
+			curPrefLog := rf.logs[rf.nextIndex[server]-1]
+			if curPrefLog.Index != args.PrevLogIndex || curPrefLog.Term != args.PrevLogTerm {
+				// old appendRPC reply received, then ignore
+				rf.mu.Unlock()
+				return
+			}
+			rf.nextIndex[server] += len(logs)
+			rf.matchIndex[server] += len(logs)
+			rf.mu.Unlock()
+
+			atomic.AddUint64(&cnt, 1)
+			if !isMajority(int(atomic.LoadUint64(&cnt)), len(rf.peers)) {
+				return
+			}
+
+			rf.checkAndCommit()
 		}(idx)
 	}
 }
@@ -161,7 +213,7 @@ func isOldLogReplica(logs, entries []LogEntry) bool {
 	if len(entries) == 0 {
 		return true
 	}
-	toCompare := logs[logs[0].Index:]
+	toCompare := logs[entries[0].Index:]
 	i := 0
 	for ; i < len(toCompare) && i < len(entries); i++ {
 		src, dst := entries[i], toCompare[i]
@@ -170,16 +222,13 @@ func isOldLogReplica(logs, entries []LogEntry) bool {
 		}
 
 		if src.Term < dst.Term {
-			fmt.Println(0)
 			return true
 		} else {
-			fmt.Println(1)
 			return false
 		}
 
 	}
 	if i == len(toCompare) {
-		fmt.Println(2)
 		return false
 	}
 	return true

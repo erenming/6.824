@@ -17,6 +17,7 @@ func Test_isOldLogReplica(t *testing.T) {
 		{
 			args: args{
 				logs: []LogEntry{
+					{},
 					{
 						Index:   1,
 						Command: 101,
@@ -59,6 +60,12 @@ func Test_isOldLogReplica(t *testing.T) {
 		{
 			args: args{
 				logs: []LogEntry{
+					{},
+					{
+						Index:   1,
+						Command: 101,
+						Term:    1,
+					},
 					{
 						Index:   2,
 						Command: 102,
@@ -68,11 +75,13 @@ func Test_isOldLogReplica(t *testing.T) {
 						Index:   3,
 						Command: 103,
 						Term:    1,
-					}, {
+					},
+					{
 						Index:   4,
 						Command: 104,
 						Term:    1,
-					}, {
+					},
+					{
 						Index:   5,
 						Command: 104,
 						Term:    1,
@@ -111,11 +120,13 @@ func Test_isOldLogReplica(t *testing.T) {
 						Index:   3,
 						Command: 103,
 						Term:    1,
-					}, {
+					},
+					{
 						Index:   4,
 						Command: 104,
 						Term:    1,
-					}, {
+					},
+					{
 						Index:   5,
 						Command: 104,
 						Term:    1,

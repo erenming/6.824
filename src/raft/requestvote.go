@@ -30,7 +30,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if !rf.isMoreUpToDate(args) {
-		rf.DPrintf("[%s]not isMoreUpToDate", args.TraceID)
+		// rf.DPrintf("[%s]not isMoreUpToDate", args.TraceID)
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
 		return
@@ -57,7 +57,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // check args is more update-to-date server
 func (rf *Raft) isMoreUpToDate(args *RequestVoteArgs) bool {
 	prevLog := rf.logs[len(rf.logs)-1]
-	rf.DPrintf("[%s] logs: %+v, prevLog<%d, %d>, args<%d, %d>", args.TraceID, rf.logs, prevLog.Term, prevLog.Index, args.LastLogTerm, args.LastLogIndex)
 	if args.LastLogTerm == prevLog.Term {
 		return args.LastLogIndex >= prevLog.Index
 	} else {
@@ -83,7 +82,7 @@ func (rf *Raft) runElection() {
 		LastLogIndex: lastLog.Index,
 		TraceID:      RandStringBytes(),
 	}
-	rf.DPrintf("[%s]Vote %d, %d", args.TraceID, args.CandidateID, args.Term)
+	// rf.DPrintf("[%s]Vote %d, %d", args.TraceID, args.CandidateID, args.Term)
 	rf.mu.Unlock()
 
 	ch := rf.broadcastRV(args)
