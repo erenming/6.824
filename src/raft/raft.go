@@ -327,7 +327,7 @@ func (rf *Raft) handleToFollower() {
 		select {
 		case event := <-rf.toFollowerCh:
 			rf.mu.Lock()
-			rf.DPrintf("[%s]to follower, term: %d, server: %d, logs: %+v", event.traceID, event.term, event.server, betterLogs(rf.logs))
+			// rf.DPrintf("[%s]to follower, term: %d, server: %d, logs: %+v", event.traceID, event.term, event.server, betterLogs(rf.logs))
 			if rf.Role() == LEADER && rf.notLeaderCh != nil {
 				close(rf.notLeaderCh)
 			}

@@ -70,7 +70,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if len(args.Entries) > 0 && isOldLogReplica(rf.logs, args.Entries) {
 		reply.Term = rf.currentTerm
 		reply.Success = true
-		rf.DPrintf("ignore old rpc. <%+v, %+v>", betterLogs(rf.logs), betterLogs(args.Entries))
+		// rf.DPrintf("ignore old rpc. <%+v, %+v>", betterLogs(rf.logs), betterLogs(args.Entries))
+		// rf.DPrintf("ignore old rpc.")
 		return
 	}
 
@@ -130,7 +131,13 @@ func (rf *Raft) broadcastAppendRPC(retry bool) {
 			}
 			traceID := RandStringBytes()
 			rf.mu.Lock()
-			logs := rf.logs[rf.nextIndex[server]:]
+
+			tmp := rf.logs[rf.nextIndex[server]:]
+			logs := make([]LogEntry, len(tmp))
+			for i := 0; i < len(tmp); i++ {
+				logs[i] = tmp[i]
+			}
+
 			prevLog := rf.logs[rf.nextIndex[server]-1]
 			args := AppendEntriesArgs{
 				Term:         rf.currentTerm,
@@ -208,26 +215,24 @@ func (rf *Raft) reqAppendRPC(server int, args AppendEntriesArgs) (AppendEntriesR
 }
 
 func isOldLogReplica(logs, entries []LogEntry) bool {
-	if len(entries) == 0 {
-		return true
-	}
 	toCompare := logs[entries[0].Index:]
 	i := 0
 	for ; i < len(toCompare) && i < len(entries); i++ {
 		src, dst := entries[i], toCompare[i]
-		if src.Equal(dst) {
-			continue
-		}
-
-		if src.Term < dst.Term {
+		if src.Term > dst.Term {
+			return false
+		} else if src.Term < dst.Term {
 			return true
 		} else {
-			return false
+			if src.Index == dst.Index {
+				continue
+			} else {
+				return false
+			}
 		}
-
 	}
-	if i == len(toCompare) {
-		return false
+	if i == len(entries) {
+		return true
 	}
-	return true
+	return false
 }
