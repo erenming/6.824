@@ -56,6 +56,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.PrevLogIndex > lastLog.Index {
 		reply.Term = rf.currentTerm
 		reply.Success = false
+
+		reply.XTerm = lastLog.Term
+		reply.XIndex = lastLog.Index
+		reply.XLen = len(rf.logs) - 1
+
 		return
 	}
 
@@ -63,6 +68,17 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.PrevLogIndex != target.Index || args.PrevLogTerm != target.Term {
 		reply.Term = rf.currentTerm
 		reply.Success = false
+
+		j := target.Index
+		for ; j > 0; j-- {
+			if rf.logs[j].Term != target.Term {
+				break
+			}
+		}
+		reply.XTerm = target.Term
+		reply.XIndex = j + 1
+		reply.XLen = len(rf.logs) - 1
+
 		return
 	}
 
@@ -173,8 +189,8 @@ func (rf *Raft) broadcastAppendRPC(retry bool) {
 			if !reply.Success {
 				// handle rejected AppendRPC
 				rf.mu.Lock()
-				rf.nextIndex[server]--
-				rf.matchIndex[server]--
+				rf.nextIndex[server] = reply.XIndex
+				rf.matchIndex[server] = reply.XIndex - 1
 				rf.mu.Unlock()
 				if retry {
 					goto redo
