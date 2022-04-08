@@ -57,9 +57,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Term = rf.currentTerm
 		reply.Success = false
 
-		reply.XTerm = lastLog.Term
-		reply.XIndex = lastLog.Index
-		reply.XLen = len(rf.logs) - 1
+		reply.XLen = len(rf.logs)
 
 		return
 	}
@@ -76,9 +74,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			}
 		}
 		reply.XTerm = target.Term
-		reply.XIndex = j + 1
-		reply.XLen = len(rf.logs) - 1
-
+		if j > 0 {
+			reply.XIndex = j + 1
+		}
 		return
 	}
 
@@ -86,17 +84,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if len(args.Entries) > 0 && isOldLogReplica(rf.logs, args.Entries) {
 		reply.Term = rf.currentTerm
 		reply.Success = true
-		// rf.DPrintf("ignore old rpc. <%+v, %+v>", betterLogs(rf.logs), betterLogs(args.Entries))
 		// rf.DPrintf("ignore old rpc.")
 		return
 	}
 
 	if len(args.Entries) > 0 {
-		// rf.DPrintf("[%s]rewrite, <%d, %d>, %+v, %+v", args.TraceID, args.PrevLogTerm, args.PrevLogIndex, betterLogs(rf.logs), betterLogs(args.Entries))
 		// clean invalid log entries
 		rf.logs = rf.logs[:args.PrevLogIndex+1]
 		rf.logs = append(rf.logs, args.Entries...)
-		// rf.DPrintf("[%s]after-rewrite, %+v", args.TraceID, betterLogs(rf.logs))
 	}
 
 	if args.LeaderCommit > rf.commitIndex {
@@ -189,8 +184,24 @@ func (rf *Raft) broadcastAppendRPC(retry bool) {
 			if !reply.Success {
 				// handle rejected AppendRPC
 				rf.mu.Lock()
-				rf.nextIndex[server] = reply.XIndex
-				rf.matchIndex[server] = reply.XIndex - 1
+				preidx := rf.nextIndex[server]
+				if reply.XIndex != -1 {
+					rf.nextIndex[server] = reply.XIndex
+				} else if reply.XTerm != -1 {
+					j, term := args.PrevLogIndex, args.PrevLogTerm
+					for ; j > 0; j-- {
+						if rf.logs[j].Term != term {
+							break
+						}
+					}
+					rf.nextIndex[server] = j + 1
+					// back xterm
+				} else if reply.XLen != -1 {
+					rf.nextIndex[server] = reply.XLen
+				} else {
+					rf.nextIndex[server]--
+				}
+				rf.matchIndex[server] = rf.nextIndex[server] - 1
 				rf.mu.Unlock()
 				if retry {
 					goto redo

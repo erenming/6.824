@@ -349,7 +349,7 @@ loop:
 }
 
 func TestRejoin2B(t *testing.T) {
-	t.SkipNow()
+	// t.SkipNow()
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
