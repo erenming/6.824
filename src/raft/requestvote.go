@@ -82,7 +82,7 @@ func (rf *Raft) runElection() {
 		LastLogIndex: lastLog.Index,
 		TraceID:      RandStringBytes(),
 	}
-	// rf.DPrintf("[%s]Vote %d, %d", args.TraceID, args.CandidateID, args.Term)
+	rf.DPrintf("[%s]Vote %d, %d", args.TraceID, args.CandidateID, args.Term)
 	rf.mu.Unlock()
 
 	ch := rf.broadcastRV(args)

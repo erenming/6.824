@@ -43,11 +43,15 @@ func RandStringBytes() string {
 	return string(b)
 }
 
-
 func betterLogs(data []LogEntry) [][]interface{} {
 	res := make([][]interface{}, len(data))
 	for i, item := range data {
 		res[i] = []interface{}{item.Command, item.Term}
 	}
 	return res
+}
+
+func isMajority(cnt int, total int) bool {
+	cnt++ // include leader self
+	return cnt >= total/2+total%2
 }
