@@ -7,3 +7,6 @@
 - matchIndex需与next保持同步
 - 需要考虑之前的Replica RCP请求(Entries里的LogEntry会重叠)，不能直接更新nextIndex
 - channel的消费者退出后，不能阻塞生产者。设置Buffer Channel确保replica请求不会阻塞
+# 2B
+- heartbeat只是一种特殊的AppendEntryRPC(entries为空)，无需特殊对待
+- leader和follower都应该忽略之前的AppendEntryRPC，否则follower的logs会被错误的覆盖和修改
