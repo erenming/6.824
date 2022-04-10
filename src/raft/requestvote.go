@@ -1,8 +1,10 @@
 package raft
 
 import (
-	"sync"
+	// "sync"
 	"time"
+
+	sync "github.com/sasha-s/go-deadlock"
 )
 
 type RequestVoteArgs struct {
@@ -20,42 +22,49 @@ type RequestVoteReply struct {
 
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if args.Term > rf.CurrentTerm() {
-		rf.toFollowerCh <- toFollowerEvent{
+		rf.convertToFollower(toFollowerEvent{
 			term:    args.Term,
-			server:  rf.me,
+			server:  args.CandidateID,
 			traceID: args.TraceID,
-		}
+		})
 	}
 
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	if !rf.isMoreUpToDate(args) {
-		// rf.DPrintf("[%s]not isMoreUpToDate", args.TraceID)
-		reply.Term = rf.currentTerm
+		rf.DPrintf("[%s]isMoreUpToDate rejected, <%d>", args.TraceID, rf.currentTerm)
+		reply.Term = rf.CurrentTerm()
 		reply.VoteGranted = false
 		return
 	}
 
-	if args.Term < rf.currentTerm {
-		reply.Term = rf.currentTerm
+	if args.Term < rf.CurrentTerm() {
+		rf.DPrintf("[%s]args.Term < rf.currentTerm rejected, <%d>", args.TraceID, rf.CurrentTerm())
+		reply.Term = rf.CurrentTerm()
 		reply.VoteGranted = false
 		return
 	}
 
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateID {
+		// rf.DPrintf("[%s]voted success", args.TraceID)
+		rf.mu.Lock()
 		rf.votedFor = args.CandidateID
+		rf.persist()
 		rf.electionTimeout = randomElectionTimeout()
 		rf.refreshTime = time.Now()
-		reply.Term = rf.currentTerm
+		rf.mu.Unlock()
+
+		reply.Term = rf.CurrentTerm()
 		reply.VoteGranted = true
 	} else {
-		reply.Term = rf.currentTerm
+		rf.DPrintf("[%s]end rejected, <%d>", args.TraceID, rf.CurrentTerm())
+		reply.Term = rf.CurrentTerm()
 		reply.VoteGranted = false
 	}
 }
 
 // check args is more update-to-date server
 func (rf *Raft) isMoreUpToDate(args *RequestVoteArgs) bool {
+	rf.mu.RLock()
+	defer rf.mu.RUnlock()
 	prevLog := rf.logs[len(rf.logs)-1]
 	if args.LastLogTerm == prevLog.Term {
 		return args.LastLogIndex >= prevLog.Index
@@ -70,20 +79,24 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 }
 
 func (rf *Raft) runElection() {
-	rf.mu.Lock()
+	tranceID := RandStringBytes()
 	rf.SetRole(CANDIDATE)
+	rf.mu.Lock()
 	rf.currentTerm++
 	rf.votedFor = rf.me
+	rf.persist()
+	rf.mu.Unlock()
+
+	rf.mu.RLock()
 	lastLog := rf.logs[len(rf.logs)-1]
 	args := &RequestVoteArgs{
 		Term:         rf.currentTerm,
 		CandidateID:  rf.me,
 		LastLogTerm:  lastLog.Term,
 		LastLogIndex: lastLog.Index,
-		TraceID:      RandStringBytes(),
+		TraceID:      tranceID,
 	}
-	rf.DPrintf("[%s]Vote %d, %d", args.TraceID, args.CandidateID, args.Term)
-	rf.mu.Unlock()
+	rf.mu.RUnlock()
 
 	ch := rf.broadcastRV(args)
 	cnt, n := 1, len(rf.peers)
@@ -96,13 +109,16 @@ func (rf *Raft) runElection() {
 			rf.votedFor = -1
 			rf.mu.Unlock()
 			return
-		case reply := <-ch:
+		case reply, ok := <-ch:
+			if !ok {
+				return
+			}
 			if rf.CurrentTerm() < reply.Term {
-				rf.toFollowerCh <- toFollowerEvent{
+				rf.convertToFollower(toFollowerEvent{
 					term:    reply.Term,
 					server:  rf.me,
 					traceID: args.TraceID,
-				}
+				})
 				return
 			}
 
@@ -134,7 +150,10 @@ func (rf *Raft) broadcastRV(args *RequestVoteArgs) chan RequestVoteReply {
 			if !ok {
 				return
 			}
-			ch <- reply
+			select {
+			case ch <- reply:
+			default:
+			}
 		}(idx)
 
 	}
