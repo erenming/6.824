@@ -20,11 +20,11 @@ type RequestVoteReply struct {
 
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if args.Term > rf.CurrentTerm() {
-		rf.toFollowerCh <- toFollowerEvent{
+		rf.convertToFollower(toFollowerEvent{
 			term:    args.Term,
 			server:  rf.me,
 			traceID: args.TraceID,
-		}
+		})
 	}
 
 	rf.mu.Lock()
@@ -96,13 +96,19 @@ func (rf *Raft) runElection() {
 			rf.votedFor = -1
 			rf.mu.Unlock()
 			return
-		case reply := <-ch:
-			if rf.CurrentTerm() < reply.Term {
-				rf.toFollowerCh <- toFollowerEvent{
+		case reply, ok := <-ch:
+			if !ok {
+				return
+			}
+			if reply.Term > rf.CurrentTerm() {
+				rf.convertToFollower(toFollowerEvent{
 					term:    reply.Term,
 					server:  rf.me,
 					traceID: args.TraceID,
-				}
+				})
+				return
+			}
+			if reply.Term > args.Term {
 				return
 			}
 

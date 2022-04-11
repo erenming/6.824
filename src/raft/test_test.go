@@ -993,11 +993,11 @@ func internalChurn(t *testing.T, unreliable bool) {
 }
 
 func TestReliableChurn2C(t *testing.T) {
-	t.SkipNow()
+	// t.SkipNow()
 	internalChurn(t, false)
 }
 
 func TestUnreliableChurn2C(t *testing.T) {
-	t.SkipNow()
+	// t.SkipNow()
 	internalChurn(t, true)
 }

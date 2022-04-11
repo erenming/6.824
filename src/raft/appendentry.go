@@ -35,11 +35,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	if rf.Role() != FOLLOWER {
-		rf.toFollowerCh <- toFollowerEvent{
+		rf.convertToFollower(toFollowerEvent{
 			term:    args.Term,
 			server:  rf.me,
 			traceID: args.TraceID,
-		}
+		})
 	}
 
 	rf.mu.Lock()
@@ -173,11 +173,14 @@ func (rf *Raft) broadcastAppendRPC(retry bool) {
 			}
 
 			if reply.Term > rf.CurrentTerm() {
-				rf.toFollowerCh <- toFollowerEvent{
+				rf.convertToFollower(toFollowerEvent{
 					term:    reply.Term,
 					server:  rf.me,
 					traceID: args.TraceID,
-				}
+				})
+				return
+			}
+			if reply.Term > args.Term {
 				return
 			}
 
@@ -200,6 +203,7 @@ func (rf *Raft) broadcastAppendRPC(retry bool) {
 				} else {
 					rf.nextIndex[server]--
 				}
+
 				rf.matchIndex[server] = rf.nextIndex[server] - 1
 				rf.mu.Unlock()
 				if retry {

@@ -91,7 +91,7 @@ type Raft struct {
 	role                  atomic.Value
 
 	// doneHeartBeat chan struct{}
-	toFollowerCh  chan toFollowerEvent
+	// toFollowerCh  chan toFollowerEvent
 	toCandidateCh chan struct{}
 	toLeaderCh    chan struct{}
 	notLeaderCh   chan struct{}
@@ -342,7 +342,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.initNextIndex()
 	rf.initMatchIndex()
 
-	rf.toFollowerCh = make(chan toFollowerEvent)
+	// rf.toFollowerCh = make(chan toFollowerEvent)
 	rf.toCandidateCh = make(chan struct{})
 	rf.toLeaderCh = make(chan struct{})
 	rf.notLeaderCh = make(chan struct{})
@@ -379,30 +379,47 @@ func (rf *Raft) checkElectionTimeout() {
 }
 
 func (rf *Raft) eventLoop() {
-	go rf.handleToFollower()
+	// go rf.handleToFollower()
 	go rf.handleToCandidate()
 	go rf.handleToLeader()
 }
 
-func (rf *Raft) handleToFollower() {
-	for {
-		select {
-		case event := <-rf.toFollowerCh:
-			rf.mu.Lock()
-			// rf.DPrintf("[%s]to follower, term: %d, server: %d, logs: %+v", event.traceID, event.term, event.server, betterLogs(rf.logs))
-			if rf.Role() == LEADER && rf.notLeaderCh != nil {
-				close(rf.notLeaderCh)
-			}
-			rf.currentTerm = event.term
-			rf.SetRole(FOLLOWER)
-			rf.electionTimeout = randomElectionTimeout()
-			rf.refreshTime = time.Now()
-			rf.votedFor = -1
-			rf.mu.Unlock()
-		case <-rf.doneServer:
-			return
-		}
+// func (rf *Raft) handleToFollower() {
+// 	for {
+// 		select {
+// 		case event := <-rf.toFollowerCh:
+// 			rf.mu.Lock()
+// 			// rf.DPrintf("[%s]to follower, term: %d, server: %d, logs: %+v", event.traceID, event.term, event.server, betterLogs(rf.logs))
+// 			if rf.Role() == LEADER && rf.notLeaderCh != nil {
+// 				close(rf.notLeaderCh)
+// 			}
+// 			rf.currentTerm = event.term
+// 			rf.SetRole(FOLLOWER)
+// 			rf.electionTimeout = randomElectionTimeout()
+// 			rf.refreshTime = time.Now()
+// 			rf.votedFor = -1
+// 			rf.mu.Unlock()
+// 		case <-rf.doneServer:
+// 			return
+// 		}
+// 	}
+// }
+
+func (rf *Raft) convertToFollower(event toFollowerEvent) {
+	if rf.killed() {
+		return
 	}
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	// rf.DPrintf("[%s]to follower, term: %d, server: %d, logs: %+v", event.traceID, event.term, event.server, betterLogs(rf.logs))
+	if rf.Role() == LEADER && rf.notLeaderCh != nil {
+		close(rf.notLeaderCh)
+	}
+	rf.currentTerm = event.term
+	rf.SetRole(FOLLOWER)
+	rf.electionTimeout = randomElectionTimeout()
+	rf.refreshTime = time.Now()
+	rf.votedFor = -1
 }
 
 func (rf *Raft) handleToCandidate() {
