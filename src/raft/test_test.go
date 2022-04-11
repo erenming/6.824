@@ -8,12 +8,15 @@ package raft
 // test with the original before submitting.
 //
 
-import "testing"
-import "fmt"
-import "time"
-import "math/rand"
-import "sync/atomic"
-import "sync"
+import (
+	"fmt"
+	"math/rand"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
 
 // The tester generously allows solutions to complete elections in one second
 // (much more than the paper's range of timeouts).
@@ -86,7 +89,19 @@ func TestReElection2A(t *testing.T) {
 	cfg.end()
 }
 
+func (cfg *config) PrintAllServer() {
+	var sb strings.Builder
+	sb.WriteString("\nPrintAllServer start\n")
+	for i := 0; i < cfg.n; i++ {
+		term, isLeader := cfg.rafts[i].GetState()
+		sb.WriteString(fmt.Sprintf("\tserver: %d, term: %d, isLeader: %+v\n", i, term, isLeader))
+	}
+	sb.WriteString("PrintAllServer end\n")
+	fmt.Println(sb.String())
+}
+
 func TestBasicAgree2B(t *testing.T) {
+	// t.SkipNow()
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -114,6 +129,7 @@ func TestBasicAgree2B(t *testing.T) {
 // each command is sent to each peer just once.
 //
 func TestRPCBytes2B(t *testing.T) {
+	// t.SkipNow()
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -145,6 +161,7 @@ func TestRPCBytes2B(t *testing.T) {
 }
 
 func TestFailAgree2B(t *testing.T) {
+	// t.SkipNow()
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -179,6 +196,7 @@ func TestFailAgree2B(t *testing.T) {
 }
 
 func TestFailNoAgree2B(t *testing.T) {
+	// t.SkipNow()
 	servers := 5
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -223,13 +241,13 @@ func TestFailNoAgree2B(t *testing.T) {
 	if index2 < 2 || index2 > 3 {
 		t.Fatalf("unexpected index %v", index2)
 	}
-
 	cfg.one(1000, servers, true)
 
 	cfg.end()
 }
 
 func TestConcurrentStarts2B(t *testing.T) {
+	// t.SkipNow()
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -331,6 +349,7 @@ loop:
 }
 
 func TestRejoin2B(t *testing.T) {
+	// t.SkipNow()
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -369,6 +388,7 @@ func TestRejoin2B(t *testing.T) {
 }
 
 func TestBackup2B(t *testing.T) {
+	// t.SkipNow()
 	servers := 5
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -387,7 +407,6 @@ func TestBackup2B(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		cfg.rafts[leader1].Start(rand.Int())
 	}
-
 	time.Sleep(RaftElectionTimeout / 2)
 
 	cfg.disconnect((leader1 + 0) % servers)
@@ -441,6 +460,7 @@ func TestBackup2B(t *testing.T) {
 }
 
 func TestCount2B(t *testing.T) {
+	// t.SkipNow()
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -551,6 +571,7 @@ loop:
 }
 
 func TestPersist12C(t *testing.T) {
+	// t.SkipNow()
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -597,6 +618,7 @@ func TestPersist12C(t *testing.T) {
 }
 
 func TestPersist22C(t *testing.T) {
+	// t.SkipNow()
 	servers := 5
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -643,6 +665,7 @@ func TestPersist22C(t *testing.T) {
 }
 
 func TestPersist32C(t *testing.T) {
+	// t.SkipNow()
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -683,6 +706,7 @@ func TestPersist32C(t *testing.T) {
 // haven't been committed yet.
 //
 func TestFigure82C(t *testing.T) {
+	// t.SkipNow()
 	servers := 5
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -739,6 +763,7 @@ func TestFigure82C(t *testing.T) {
 }
 
 func TestUnreliableAgree2C(t *testing.T) {
+	// t.SkipNow()
 	servers := 5
 	cfg := make_config(t, servers, true)
 	defer cfg.cleanup()
@@ -768,6 +793,7 @@ func TestUnreliableAgree2C(t *testing.T) {
 }
 
 func TestFigure8Unreliable2C(t *testing.T) {
+	// t.SkipNow()
 	servers := 5
 	cfg := make_config(t, servers, true)
 	defer cfg.cleanup()
@@ -968,9 +994,11 @@ func internalChurn(t *testing.T, unreliable bool) {
 }
 
 func TestReliableChurn2C(t *testing.T) {
+	// t.SkipNow()
 	internalChurn(t, false)
 }
 
 func TestUnreliableChurn2C(t *testing.T) {
+	// t.SkipNow()
 	internalChurn(t, true)
 }

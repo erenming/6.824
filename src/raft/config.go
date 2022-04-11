@@ -8,17 +8,20 @@ package raft
 // test with the original before submitting.
 //
 
-import "../labrpc"
-import "log"
-import "sync"
-import "testing"
-import "runtime"
-import "math/rand"
-import crand "crypto/rand"
-import "math/big"
-import "encoding/base64"
-import "time"
-import "fmt"
+import (
+	crand "crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"log"
+	"math/big"
+	"math/rand"
+	"runtime"
+	"sync"
+	"testing"
+	"time"
+
+	"../labrpc"
+)
 
 func randstring(n int) string {
 	b := make([]byte, 2*n)
@@ -233,7 +236,7 @@ func (cfg *config) cleanup() {
 
 // attach server i to the net.
 func (cfg *config) connect(i int) {
-	// fmt.Printf("connect(%d)\n", i)
+	fmt.Printf("connect(%d)\n", i)
 
 	cfg.connected[i] = true
 
@@ -256,7 +259,7 @@ func (cfg *config) connect(i int) {
 
 // detach server i from the net.
 func (cfg *config) disconnect(i int) {
-	// fmt.Printf("disconnect(%d)\n", i)
+	fmt.Printf("disconnect(%d)\n", i)
 
 	cfg.connected[i] = false
 
@@ -446,6 +449,10 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 				if ok {
 					index = index1
 					break
+				} else {
+					if index1 != -1 {
+						fmt.Println("server: ",rf.me)
+					}
 				}
 			}
 		}
