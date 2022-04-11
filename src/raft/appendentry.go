@@ -28,6 +28,11 @@ type AppendEntriesReply struct {
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	// Your code here (2A, 2B).
+	reply.XTerm = -1
+	reply.XIndex = -1
+	reply.XLen = -1
+	reply.TraceID = args.TraceID
+
 	if args.Term < rf.CurrentTerm() {
 		reply.Term = rf.CurrentTerm()
 		reply.Success = false
@@ -35,22 +40,18 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	if rf.Role() != FOLLOWER {
-		rf.toFollowerCh <- toFollowerEvent{
+		rf.convertToFollower(toFollowerEvent{
 			term:    args.Term,
 			server:  rf.me,
 			traceID: args.TraceID,
-		}
+		})
 	}
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	rf.currentTerm = args.Term
 	rf.refreshTime = time.Now()
-
-	reply.XTerm = -1
-	reply.XIndex = -1
-	reply.XLen = -1
-	reply.TraceID = args.TraceID
+	rf.persist()
 
 	lastLog := rf.logs[len(rf.logs)-1]
 	if args.PrevLogIndex > lastLog.Index {
@@ -58,7 +59,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = false
 
 		reply.XLen = len(rf.logs)
-
+		rf.DPrintf("[%s]1-reply: %+v", args.TraceID, reply)
 		return
 	}
 
@@ -77,6 +78,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if j > 0 {
 			reply.XIndex = j + 1
 		}
+		rf.DPrintf("[%s]2-reply: %+v", args.TraceID, reply)
 		return
 	}
 
@@ -93,6 +95,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.logs = rf.logs[:args.PrevLogIndex+1]
 		rf.logs = append(rf.logs, args.Entries...)
 	}
+	rf.persist()
 
 	if args.LeaderCommit > rf.commitIndex {
 		minIdx := min(args.LeaderCommit, len(rf.logs)-1)
@@ -136,19 +139,19 @@ func (rf *Raft) broadcastAppendRPC(retry bool) {
 		}
 
 		go func(server int) {
-		redo:
+			traceID := RandStringBytes()
 			if rf.killed() || rf.Role() != LEADER {
 				return
 			}
-			traceID := RandStringBytes()
-			rf.mu.Lock()
-
+			rf.mu.RLock()
 			tmp := rf.logs[rf.nextIndex[server]:]
 			logs := make([]LogEntry, len(tmp))
 			for i := 0; i < len(tmp); i++ {
 				logs[i] = tmp[i]
 			}
-
+			if rf.nextIndex[server]-1 == -1 {
+				rf.DPrintf("[%s] index out of range [-1], term: %d, retry: %+v, role: %s, nindex: %+v", traceID, rf.currentTerm, retry, rf.Role(), rf.nextIndex)
+			}
 			prevLog := rf.logs[rf.nextIndex[server]-1]
 			args := AppendEntriesArgs{
 				Term:         rf.currentTerm,
@@ -159,10 +162,9 @@ func (rf *Raft) broadcastAppendRPC(retry bool) {
 				PrevLogTerm:  prevLog.Term,
 				TraceID:      traceID,
 			}
-			if retry {
-				// rf.DPrintf("[%s]replica to %d, <%d, %d>, entries: %+v", args.TraceID, server, args.PrevLogTerm, args.PrevLogIndex, betterLogs(args.Entries))
-			}
-			rf.mu.Unlock()
+			rf.mu.RUnlock()
+
+		redo:
 			reply, ok := rf.reqAppendRPC(server, args)
 			if !ok {
 				if retry {
@@ -173,20 +175,24 @@ func (rf *Raft) broadcastAppendRPC(retry bool) {
 			}
 
 			if reply.Term > rf.CurrentTerm() {
-				rf.toFollowerCh <- toFollowerEvent{
+				rf.convertToFollower(toFollowerEvent{
 					term:    reply.Term,
 					server:  rf.me,
 					traceID: args.TraceID,
-				}
+				})
 				return
 			}
 
 			if !reply.Success {
 				// handle rejected AppendRPC
 				rf.mu.Lock()
-				preidx := rf.nextIndex[server]
+				if retry && rf.Role() != LEADER {
+					rf.mu.Unlock()
+					return
+				}
 				if reply.XIndex != -1 {
 					rf.nextIndex[server] = reply.XIndex
+					rf.DPrintf("[%s]reply.XIndex from %d, nindx: %+v, retry: %+v, reply: %+v", args.TraceID, server, rf.nextIndex, retry, reply)
 				} else if reply.XTerm != -1 {
 					j, term := args.PrevLogIndex, args.PrevLogTerm
 					for ; j > 0; j-- {
@@ -195,11 +201,14 @@ func (rf *Raft) broadcastAppendRPC(retry bool) {
 						}
 					}
 					rf.nextIndex[server] = j + 1
+					rf.DPrintf("[%s]reply.XTerm from %d, nindx: %+v", args.TraceID, server, rf.nextIndex)
 					// back xterm
 				} else if reply.XLen != -1 {
 					rf.nextIndex[server] = reply.XLen
+					rf.DPrintf("[%s]reply.XLen from %d, nindx: %+v", args.TraceID, server, rf.nextIndex)
 				} else {
 					rf.nextIndex[server]--
+					rf.DPrintf("[%s]decrease nindx from %d, nindx: %+v", args.TraceID, server, rf.nextIndex)
 				}
 				rf.matchIndex[server] = rf.nextIndex[server] - 1
 				rf.mu.Unlock()
@@ -212,6 +221,13 @@ func (rf *Raft) broadcastAppendRPC(retry bool) {
 
 			// handle nextIndex&matchIndex
 			rf.mu.Lock()
+			if retry && rf.Role() != LEADER {
+				rf.mu.Unlock()
+				return
+			}
+			if rf.nextIndex[server] == 0 {
+				rf.DPrintf("[%s] term: %d, logs: %+v, retry: %+v, role: %s, nindex", args.TraceID, rf.currentTerm, betterLogs(rf.logs), retry, rf.Role(), rf.nextIndex)
+			}
 			curPrefLog := rf.logs[rf.nextIndex[server]-1]
 			if curPrefLog.Index != args.PrevLogIndex || curPrefLog.Term != args.PrevLogTerm {
 				// old appendRPC reply received, then ignore

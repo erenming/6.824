@@ -18,12 +18,20 @@ package raft
 //
 
 import (
-	"sync"
+	"bytes"
 	"sync/atomic"
 	"time"
 
+	// "sync"
+	sync "github.com/sasha-s/go-deadlock"
+
+	"../labgob"
 	"../labrpc"
 )
+
+func init() {
+	sync.Opts.DeadlockTimeout = time.Millisecond * 500
+}
 
 // import "bytes"
 // import "../labgob"
@@ -75,7 +83,7 @@ func (rf *Raft) SetRole(role ServerRole) {
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-	mu        sync.Mutex          // Lock to protect shared access to this peer's state
+	mu        sync.RWMutex        // Lock to protect shared access to this peer's state
 	peers     []*labrpc.ClientEnd // RPC end points of all peers
 	persister *Persister          // Object to hold this peer's persisted state
 	me        int                 // this peer's index into peers[]
@@ -91,7 +99,7 @@ type Raft struct {
 	role                  atomic.Value
 
 	// doneHeartBeat chan struct{}
-	toFollowerCh  chan toFollowerEvent
+	// toFollowerCh  chan toFollowerEvent
 	toCandidateCh chan struct{}
 	toLeaderCh    chan struct{}
 	notLeaderCh   chan struct{}
@@ -101,7 +109,7 @@ type Raft struct {
 
 	// replicate related
 	// index of highest log entry applied to state machine
-	lastApplied int
+	lastApplied int // TODO. not important?
 	nextIndex   []int
 	// commit related
 	commitIndex int
@@ -118,14 +126,14 @@ type toFollowerEvent struct {
 }
 
 func (rf *Raft) NextIndex() []int {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	rf.mu.RLock()
+	defer rf.mu.RUnlock()
 	return rf.nextIndex
 }
 
 func (rf *Raft) LastApplied() int {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	rf.mu.RLock()
+	defer rf.mu.RUnlock()
 	return rf.lastApplied
 }
 
@@ -136,8 +144,8 @@ func (rf *Raft) SetLastApplied(lastApplied int) {
 }
 
 func (rf *Raft) CurrentTerm() int {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	rf.mu.RLock()
+	defer rf.mu.RUnlock()
 	return rf.currentTerm
 }
 
@@ -148,8 +156,8 @@ func (rf *Raft) SetCurrentTerm(currentTerm int) {
 }
 
 func (rf *Raft) ElectionTimeout() time.Duration {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	rf.mu.RLock()
+	defer rf.mu.RUnlock()
 	return rf.electionTimeout
 }
 
@@ -160,8 +168,8 @@ func (rf *Raft) SetElectionTimeout(electionTimeout time.Duration) {
 }
 
 func (rf *Raft) RefreshTime() time.Time {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	rf.mu.RLock()
+	defer rf.mu.RUnlock()
 	return rf.refreshTime
 }
 
@@ -174,8 +182,8 @@ func (rf *Raft) SetRefreshTime(refreshTime time.Time) {
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	rf.mu.RLock()
+	defer rf.mu.RUnlock()
 	return rf.currentTerm, rf.Role() == LEADER
 }
 
@@ -185,14 +193,13 @@ func (rf *Raft) GetState() (int, bool) {
 // see paper's Figure 2 for a description of what should be persistent.
 //
 func (rf *Raft) persist() {
-	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.logs)
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
 
 //
@@ -204,17 +211,33 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 	// Your code here (2C).
 	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var (
+		currentTerm int
+		votedFor    int
+		logs        []LogEntry
+	)
+	if err := d.Decode(&currentTerm); err != nil {
+		rf.DPrintf("currentTerm: %s", err)
+		return
+	} else {
+		rf.currentTerm = currentTerm
+	}
+
+	if err := d.Decode(&votedFor); err != nil {
+		rf.DPrintf("votedFor: %s", err)
+		return
+	} else {
+		rf.votedFor = votedFor
+	}
+
+	if err := d.Decode(&logs); err != nil {
+		rf.DPrintf("logs: %s", err)
+		return
+	} else {
+		rf.logs = logs
+	}
 }
 
 //
@@ -271,11 +294,12 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Term:    rf.currentTerm,
 	}
 	rf.logs = append(rf.logs, le)
-	latestIndex := len(rf.logs) - 1
+	nexIndex := len(rf.logs) - 1
+	rf.persist()
 	rf.mu.Unlock()
 
 	go rf.broadcastAppendRPC(true)
-	return latestIndex, rf.CurrentTerm(), true
+	return nexIndex, rf.CurrentTerm(), true
 }
 
 func (rf *Raft) checkAndCommit() {
@@ -328,29 +352,27 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// Your initialization code here (2A, 2B, 2C).
 
 	// initialize from state persisted before a crash
-	rf.readPersist(persister.ReadRaftState())
-	rf.electionTimeout = randomElectionTimeout()
-	rf.refreshTime = time.Now()
 
 	rf.SetRole(FOLLOWER)
 	rf.votedFor = -1
-
 	rf.logs = make([]LogEntry, 1)
-	rf.applyCh = applyCh
+	rf.readPersist(persister.ReadRaftState())
 
+	rf.applyCh = applyCh
 	rf.lastApplied = 0
 	rf.initNextIndex()
 	rf.initMatchIndex()
 
-	rf.toFollowerCh = make(chan toFollowerEvent)
+	// rf.toFollowerCh = make(chan toFollowerEvent)
 	rf.toCandidateCh = make(chan struct{})
 	rf.toLeaderCh = make(chan struct{})
 	rf.notLeaderCh = make(chan struct{})
 	rf.doneServer = make(chan struct{})
 	rf.eventLoop()
 
+	rf.electionTimeout = randomElectionTimeout()
+	rf.refreshTime = time.Now()
 	go rf.checkElectionTimeout()
-
 	return rf
 }
 
@@ -368,9 +390,9 @@ func (rf *Raft) checkElectionTimeout() {
 		}
 
 		time.Sleep(5 * time.Millisecond)
-		rf.mu.Lock()
+		rf.mu.RLock()
 		to := time.Since(rf.refreshTime) > rf.electionTimeout
-		rf.mu.Unlock()
+		rf.mu.RUnlock()
 		if rf.Role() == LEADER || !to {
 			continue
 		}
@@ -379,30 +401,46 @@ func (rf *Raft) checkElectionTimeout() {
 }
 
 func (rf *Raft) eventLoop() {
-	go rf.handleToFollower()
+	// go rf.handleToFollower()
 	go rf.handleToCandidate()
 	go rf.handleToLeader()
 }
 
-func (rf *Raft) handleToFollower() {
-	for {
-		select {
-		case event := <-rf.toFollowerCh:
-			rf.mu.Lock()
-			// rf.DPrintf("[%s]to follower, term: %d, server: %d, logs: %+v", event.traceID, event.term, event.server, betterLogs(rf.logs))
-			if rf.Role() == LEADER && rf.notLeaderCh != nil {
-				close(rf.notLeaderCh)
-			}
-			rf.currentTerm = event.term
-			rf.SetRole(FOLLOWER)
-			rf.electionTimeout = randomElectionTimeout()
-			rf.refreshTime = time.Now()
-			rf.votedFor = -1
-			rf.mu.Unlock()
-		case <-rf.doneServer:
-			return
-		}
+// func (rf *Raft) handleToFollower() {
+// 	for {
+// 		select {
+// 		case event := <-rf.toFollowerCh:
+// 			rf.mu.Lock()
+// 			rf.DPrintf("[%s]to follower, term: %d, server: %d", event.traceID, event.term, event.server)
+// 			if rf.Role() == LEADER && rf.notLeaderCh != nil {
+// 				close(rf.notLeaderCh)
+// 			}
+// 			rf.currentTerm = event.term
+// 			rf.SetRole(FOLLOWER)
+// 			rf.electionTimeout = randomElectionTimeout()
+// 			rf.refreshTime = time.Now()
+// 			rf.votedFor = -1
+// 			rf.persist()
+// 			rf.mu.Unlock()
+// 		case <-rf.doneServer:
+// 			return
+// 		}
+// 	}
+// }
+
+func (rf *Raft) convertToFollower(event toFollowerEvent) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	// rf.DPrintf("[%s]to follower, term: %d, from server: %d", event.traceID, event.term, event.server)
+	if rf.Role() == LEADER && rf.notLeaderCh != nil {
+		close(rf.notLeaderCh)
 	}
+	rf.currentTerm = event.term
+	rf.votedFor = -1
+	rf.SetRole(FOLLOWER)
+	rf.persist()
+	rf.electionTimeout = randomElectionTimeout()
+	rf.refreshTime = time.Now()
 }
 
 func (rf *Raft) handleToCandidate() {
@@ -436,14 +474,14 @@ func (rf *Raft) handleToLeader() {
 				// impossible, then pass
 			case CANDIDATE:
 				rf.mu.Lock()
-				rf.DPrintf("to leader, %+v", betterLogs(rf.logs))
 				rf.SetRole(LEADER)
 				rf.notLeaderCh = make(chan struct{})
+				rf.persist()
 				rf.mu.Unlock()
 				rf.initNextIndex()
 				rf.initMatchIndex()
 				go rf.runHeartBeat()
-				rf.DPrintf("to leader done, term: %d", rf.CurrentTerm())
+				rf.DPrintf("to leader done, term: %d, nindex: %+v", rf.CurrentTerm(), rf.NextIndex())
 			}
 		}
 	}
