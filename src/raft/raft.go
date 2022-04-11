@@ -30,7 +30,7 @@ import (
 )
 
 func init() {
-	sync.Opts.DeadlockTimeout = time.Millisecond * 500
+	sync.Opts.DeadlockTimeout = time.Millisecond * 1000
 }
 
 // import "bytes"
@@ -195,9 +195,11 @@ func (rf *Raft) GetState() (int, bool) {
 func (rf *Raft) persist() {
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
+	rf.mu.RLock()
 	e.Encode(rf.currentTerm)
 	e.Encode(rf.votedFor)
 	e.Encode(rf.logs)
+	rf.mu.RUnlock()
 	data := w.Bytes()
 	rf.persister.SaveRaftState(data)
 }
@@ -295,8 +297,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 	rf.logs = append(rf.logs, le)
 	nexIndex := len(rf.logs) - 1
-	rf.persist()
 	rf.mu.Unlock()
+	rf.persist()
 
 	go rf.broadcastAppendRPC(true)
 	return nexIndex, rf.CurrentTerm(), true
@@ -389,7 +391,7 @@ func (rf *Raft) checkElectionTimeout() {
 		default:
 		}
 
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 		rf.mu.RLock()
 		to := time.Since(rf.refreshTime) > rf.electionTimeout
 		rf.mu.RUnlock()
@@ -435,10 +437,9 @@ func (rf *Raft) convertToFollower(event toFollowerEvent) {
 	if rf.Role() == LEADER && rf.notLeaderCh != nil {
 		close(rf.notLeaderCh)
 	}
+	rf.SetRole(FOLLOWER)
 	rf.currentTerm = event.term
 	rf.votedFor = -1
-	rf.SetRole(FOLLOWER)
-	rf.persist()
 	rf.electionTimeout = randomElectionTimeout()
 	rf.refreshTime = time.Now()
 }
@@ -476,8 +477,8 @@ func (rf *Raft) handleToLeader() {
 				rf.mu.Lock()
 				rf.SetRole(LEADER)
 				rf.notLeaderCh = make(chan struct{})
-				rf.persist()
 				rf.mu.Unlock()
+				rf.persist()
 				rf.initNextIndex()
 				rf.initMatchIndex()
 				go rf.runHeartBeat()

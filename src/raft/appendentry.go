@@ -33,11 +33,12 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.XLen = -1
 	reply.TraceID = args.TraceID
 
-	if args.Term < rf.CurrentTerm() {
-		reply.Term = rf.CurrentTerm()
+	if term := rf.CurrentTerm(); args.Term < term {
+		reply.Term = term
 		reply.Success = false
 		return
 	}
+	defer rf.persist()
 
 	if rf.Role() != FOLLOWER {
 		rf.convertToFollower(toFollowerEvent{
@@ -45,20 +46,21 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			server:  rf.me,
 			traceID: args.TraceID,
 		})
+		return
 	}
 
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	rf.currentTerm = args.Term
 	rf.refreshTime = time.Now()
-	rf.persist()
+	rf.mu.Unlock()
 
+	rf.mu.RLock()
 	lastLog := rf.logs[len(rf.logs)-1]
 	if args.PrevLogIndex > lastLog.Index {
 		reply.Term = rf.currentTerm
 		reply.Success = false
-
 		reply.XLen = len(rf.logs)
+		rf.mu.RUnlock()
 		rf.DPrintf("[%s]1-reply: %+v", args.TraceID, reply)
 		return
 	}
@@ -78,6 +80,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if j > 0 {
 			reply.XIndex = j + 1
 		}
+		rf.mu.RUnlock()
 		rf.DPrintf("[%s]2-reply: %+v", args.TraceID, reply)
 		return
 	}
@@ -87,16 +90,21 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Term = rf.currentTerm
 		reply.Success = true
 		// rf.DPrintf("ignore old rpc.")
+		rf.mu.RUnlock()
 		return
 	}
+	rf.mu.RUnlock()
 
 	if len(args.Entries) > 0 {
 		// clean invalid log entries
+		rf.mu.Lock()
 		rf.logs = rf.logs[:args.PrevLogIndex+1]
 		rf.logs = append(rf.logs, args.Entries...)
+		rf.mu.Unlock()
+		// rf.persist()
 	}
-	rf.persist()
 
+	rf.mu.Lock()
 	if args.LeaderCommit > rf.commitIndex {
 		minIdx := min(args.LeaderCommit, len(rf.logs)-1)
 		// rf.DPrintf("[%s]commit indx diff, <%d, %d>, term: %d", args.TraceID, rf.commitIndex, minIdx, rf.currentTerm)
@@ -114,8 +122,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 		rf.commitIndex = i - 1
 	}
-
 	reply.Term = rf.currentTerm
+	rf.mu.Unlock()
+
 	reply.Success = true
 	return
 }
@@ -174,12 +183,14 @@ func (rf *Raft) broadcastAppendRPC(retry bool) {
 				}
 			}
 
-			if reply.Term > rf.CurrentTerm() {
-				rf.convertToFollower(toFollowerEvent{
-					term:    reply.Term,
-					server:  rf.me,
-					traceID: args.TraceID,
-				})
+			if reply.Term > args.Term {
+				if reply.Term > rf.CurrentTerm() {
+					rf.convertToFollower(toFollowerEvent{
+						term:    reply.Term,
+						server:  rf.me,
+						traceID: args.TraceID,
+					})
+				}
 				return
 			}
 
@@ -207,8 +218,8 @@ func (rf *Raft) broadcastAppendRPC(retry bool) {
 					rf.nextIndex[server] = reply.XLen
 					rf.DPrintf("[%s]reply.XLen from %d, nindx: %+v", args.TraceID, server, rf.nextIndex)
 				} else {
-					rf.nextIndex[server]--
-					rf.DPrintf("[%s]decrease nindx from %d, nindx: %+v", args.TraceID, server, rf.nextIndex)
+					// rf.nextIndex[server]--
+					// rf.DPrintf("[%s]decrease nindx from %d, nindx: %+v", args.TraceID, server, rf.nextIndex)
 				}
 				rf.matchIndex[server] = rf.nextIndex[server] - 1
 				rf.mu.Unlock()

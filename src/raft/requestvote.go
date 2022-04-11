@@ -27,6 +27,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			server:  args.CandidateID,
 			traceID: args.TraceID,
 		})
+		rf.persist()
 	}
 
 	if !rf.isMoreUpToDate(args) {
@@ -44,13 +45,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateID {
-		// rf.DPrintf("[%s]voted success", args.TraceID)
+		rf.DPrintf("[%s]voted success", args.TraceID)
 		rf.mu.Lock()
 		rf.votedFor = args.CandidateID
-		rf.persist()
 		rf.electionTimeout = randomElectionTimeout()
 		rf.refreshTime = time.Now()
 		rf.mu.Unlock()
+		rf.persist()
 
 		reply.Term = rf.CurrentTerm()
 		reply.VoteGranted = true
@@ -84,8 +85,9 @@ func (rf *Raft) runElection() {
 	rf.mu.Lock()
 	rf.currentTerm++
 	rf.votedFor = rf.me
-	rf.persist()
 	rf.mu.Unlock()
+
+	rf.persist()
 
 	rf.mu.RLock()
 	lastLog := rf.logs[len(rf.logs)-1]
@@ -97,9 +99,10 @@ func (rf *Raft) runElection() {
 		TraceID:      tranceID,
 	}
 	rf.mu.RUnlock()
+	rf.DPrintf("[%s]request vote, <%d>", args.TraceID, args.Term)
 
 	ch := rf.broadcastRV(args)
-	cnt, n := 1, len(rf.peers)
+	cnt, n := 0, len(rf.peers)
 	for {
 		select {
 		case <-rf.doneServer:
@@ -113,20 +116,23 @@ func (rf *Raft) runElection() {
 			if !ok {
 				return
 			}
-			if rf.CurrentTerm() < reply.Term {
-				rf.convertToFollower(toFollowerEvent{
-					term:    reply.Term,
-					server:  rf.me,
-					traceID: args.TraceID,
-				})
+			if args.Term < reply.Term {
+				if rf.CurrentTerm() < reply.Term {
+					rf.convertToFollower(toFollowerEvent{
+						term:    reply.Term,
+						server:  rf.me,
+						traceID: args.TraceID,
+					})
+				}
 				return
 			}
 
 			if reply.VoteGranted {
+				rf.DPrintf("[%s]vote received, term: %d", args.TraceID, reply.Term)
 				cnt++
 			}
 
-			if cnt >= n/2+n%2 && rf.Role() == CANDIDATE {
+			if isMajority(cnt, n) && rf.Role() == CANDIDATE {
 				rf.toLeaderCh <- struct{}{}
 				return
 			}
