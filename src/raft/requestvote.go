@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"sync"
 	"time"
 )
 
@@ -33,19 +32,21 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if !rf.isMoreUpToDate(args) {
-		// rf.DPrintf("[%s]not isMoreUpToDate", args.TraceID)
+		rf.DPrintf("[%s]!isMoreUpToDate", args.TraceID)
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
 		return
 	}
 
 	if args.Term < rf.currentTerm {
+		rf.DPrintf("[%s]args.Term < rf.currentTerm", args.TraceID)
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
 		return
 	}
 
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateID {
+		rf.DPrintf("[%s]voted success!!!", args.TraceID)
 		rf.votedFor = args.CandidateID
 		rf.persist()
 		rf.electionTimeout = randomElectionTimeout()
@@ -53,6 +54,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = true
 	} else {
+		rf.DPrintf("[%s]ended rejected", args.TraceID)
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
 	}
@@ -87,8 +89,8 @@ func (rf *Raft) runElection() {
 		LastLogIndex: lastLog.Index,
 		TraceID:      RandStringBytes(),
 	}
-	rf.DPrintf("[%s]Vote %d, %d", args.TraceID, args.CandidateID, args.Term)
 	rf.mu.Unlock()
+	rf.DPrintf("[%s]Vote %d, %d", args.TraceID, args.CandidateID, args.Term)
 
 	ch := rf.broadcastRV(args)
 	cnt, n := 1, len(rf.peers)
@@ -99,10 +101,13 @@ func (rf *Raft) runElection() {
 		case <-time.After(rf.ElectionTimeout()):
 			rf.mu.Lock()
 			rf.votedFor = -1
+			rf.persist()
 			rf.mu.Unlock()
+			rf.DPrintf("[%s]ElectionTimeout", args.TraceID)
 			return
 		case reply, ok := <-ch:
 			if !ok {
+				rf.DPrintf("[%s] closed ch", args.TraceID)
 				return
 			}
 			if reply.Term > rf.CurrentTerm() {
@@ -131,15 +136,13 @@ func (rf *Raft) runElection() {
 }
 
 func (rf *Raft) broadcastRV(args *RequestVoteArgs) chan RequestVoteReply {
-	ch := make(chan RequestVoteReply)
-	var wg sync.WaitGroup
-	wg.Add(len(rf.peers) - 1)
+	ch := make(chan RequestVoteReply, len(rf.peers)-1)
 	for idx, _ := range rf.peers {
 		if idx == rf.me {
 			continue
 		}
 		go func(server int) {
-			defer wg.Done()
+			// defer wg.Done()
 			reply := RequestVoteReply{}
 			ok := rf.sendRequestVote(server, args, &reply)
 			if !ok {
@@ -149,9 +152,5 @@ func (rf *Raft) broadcastRV(args *RequestVoteArgs) chan RequestVoteReply {
 		}(idx)
 
 	}
-	go func() {
-		wg.Wait()
-		close(ch)
-	}()
 	return ch
 }

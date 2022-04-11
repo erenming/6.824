@@ -420,7 +420,7 @@ func (rf *Raft) convertToFollower(event toFollowerEvent) {
 	}
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	// rf.DPrintf("[%s]to follower, term: %d, server: %d, logs: %+v", event.traceID, event.term, event.server, betterLogs(rf.logs))
+	rf.DPrintf("[%s]to follower, term: %d, server: %d", event.traceID, event.term, event.server)
 	if rf.Role() == LEADER && rf.notLeaderCh != nil {
 		close(rf.notLeaderCh)
 	}
