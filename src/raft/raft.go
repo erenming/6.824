@@ -92,12 +92,9 @@ type Raft struct {
 	currentTerm, votedFor int
 	role                  atomic.Value
 
-	// doneHeartBeat chan struct{}
-	// toFollowerCh  chan toFollowerEvent
-	toCandidateCh chan struct{}
-	toLeaderCh    chan struct{}
-	notLeaderCh   chan struct{}
-	doneServer    chan struct{}
+	// toCandidateCh chan struct{}
+	notLeaderCh chan struct{}
+	doneServer  chan struct{}
 
 	logs []LogEntry // start from index=1, ignore logs[0]
 
@@ -281,6 +278,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Term:    rf.currentTerm,
 	}
 	rf.logs = append(rf.logs, le)
+	rf.persist()
 	latestIndex := len(rf.logs) - 1
 	rf.mu.Unlock()
 
@@ -344,20 +342,14 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.SetRole(FOLLOWER)
 	rf.votedFor = -1
 	rf.logs = make([]LogEntry, 1)
-	rf.readPersist(persister.ReadRaftState())
-
 	rf.applyCh = applyCh
 	rf.lastApplied = 0
+	rf.readPersist(persister.ReadRaftState())
 	rf.initNextIndex()
 	rf.initMatchIndex()
 
-	// rf.toFollowerCh = make(chan toFollowerEvent)
-	rf.toCandidateCh = make(chan struct{})
-	rf.toLeaderCh = make(chan struct{})
 	rf.notLeaderCh = make(chan struct{})
 	rf.doneServer = make(chan struct{})
-	rf.eventLoop()
-
 	go rf.checkElectionTimeout()
 
 	return rf
@@ -383,36 +375,14 @@ func (rf *Raft) checkElectionTimeout() {
 		if rf.Role() == LEADER || !to {
 			continue
 		}
-		rf.toCandidateCh <- struct{}{}
+
+		// timeout, start election
+		// timeout, new election
+		rf.SetRefreshTime(time.Now())
+		rf.SetElectionTimeout(randomElectionTimeout())
+		rf.runElection()
 	}
 }
-
-func (rf *Raft) eventLoop() {
-	// go rf.handleToFollower()
-	go rf.handleToCandidate()
-	go rf.handleToLeader()
-}
-
-// func (rf *Raft) handleToFollower() {
-// 	for {
-// 		select {
-// 		case event := <-rf.toFollowerCh:
-// 			rf.mu.Lock()
-// 			// rf.DPrintf("[%s]to follower, term: %d, server: %d, logs: %+v", event.traceID, event.term, event.server, betterLogs(rf.logs))
-// 			if rf.Role() == LEADER && rf.notLeaderCh != nil {
-// 				close(rf.notLeaderCh)
-// 			}
-// 			rf.currentTerm = event.term
-// 			rf.SetRole(FOLLOWER)
-// 			rf.electionTimeout = randomElectionTimeout()
-// 			rf.refreshTime = time.Now()
-// 			rf.votedFor = -1
-// 			rf.mu.Unlock()
-// 		case <-rf.doneServer:
-// 			return
-// 		}
-// 	}
-// }
 
 func (rf *Raft) convertToFollower(event toFollowerEvent) {
 	if rf.killed() {
@@ -420,7 +390,7 @@ func (rf *Raft) convertToFollower(event toFollowerEvent) {
 	}
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.DPrintf("[%s]to follower, term: %d, server: %d", event.traceID, event.term, event.server)
+	// rf.DPrintf("[%s]to follower, term: %d, server: %d", event.traceID, event.term, event.server)
 	if rf.Role() == LEADER && rf.notLeaderCh != nil {
 		close(rf.notLeaderCh)
 	}
@@ -432,52 +402,7 @@ func (rf *Raft) convertToFollower(event toFollowerEvent) {
 	rf.persist()
 }
 
-func (rf *Raft) handleToCandidate() {
-	for {
-		select {
-		case <-rf.doneServer:
-			return
-		case <-rf.toCandidateCh:
-			switch rf.Role() {
-			case FOLLOWER, CANDIDATE:
-				// timeout, start election
-				// timeout, new election
-				rf.SetRefreshTime(time.Now())
-				rf.SetElectionTimeout(randomElectionTimeout())
-				rf.runElection()
-			case LEADER:
-				// impossible, then pass
-			}
-		}
-	}
-}
-
-func (rf *Raft) handleToLeader() {
-	for {
-		select {
-		case <-rf.doneServer:
-			return
-		case <-rf.toLeaderCh:
-			switch rf.Role() {
-			case LEADER, FOLLOWER:
-				// impossible, then pass
-			case CANDIDATE:
-				rf.mu.Lock()
-				rf.SetRole(LEADER)
-				rf.notLeaderCh = make(chan struct{})
-				rf.mu.Unlock()
-				rf.initNextIndex()
-				rf.initMatchIndex()
-				go rf.runHeartBeat()
-				rf.DPrintf("to leader done, term: %d", rf.CurrentTerm())
-			}
-		}
-	}
-}
-
 func (rf *Raft) initNextIndex() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	nextIndex := make([]int, len(rf.peers))
 	for i := 0; i < len(rf.peers); i++ {
 		nextIndex[i] = len(rf.logs)
@@ -486,8 +411,6 @@ func (rf *Raft) initNextIndex() {
 }
 
 func (rf *Raft) initMatchIndex() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	matchIndex := make([]int, len(rf.peers))
 	for i := 0; i < len(rf.peers); i++ {
 		matchIndex[i] = len(rf.logs) - 1
