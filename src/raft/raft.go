@@ -18,10 +18,12 @@ package raft
 //
 
 import (
+	"bytes"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"../labgob"
 	"../labrpc"
 )
 
@@ -185,14 +187,13 @@ func (rf *Raft) GetState() (int, bool) {
 // see paper's Figure 2 for a description of what should be persistent.
 //
 func (rf *Raft) persist() {
-	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.logs)
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
 
 //
@@ -202,19 +203,28 @@ func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
 	}
-	// Your code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var term int
+	if err := d.Decode(&term); err == nil {
+		rf.currentTerm = term
+	} else {
+		panic(err)
+	}
+
+	var votedFor int
+	if err := d.Decode(&votedFor); err == nil {
+		rf.votedFor = votedFor
+	} else {
+		panic(err)
+	}
+
+	var logs []LogEntry
+	if err := d.Decode(&logs); err == nil {
+		rf.logs = logs
+	} else {
+		panic(err)
+	}
 }
 
 //
@@ -328,16 +338,15 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// Your initialization code here (2A, 2B, 2C).
 
 	// initialize from state persisted before a crash
-	rf.readPersist(persister.ReadRaftState())
 	rf.electionTimeout = randomElectionTimeout()
 	rf.refreshTime = time.Now()
 
 	rf.SetRole(FOLLOWER)
 	rf.votedFor = -1
-
 	rf.logs = make([]LogEntry, 1)
-	rf.applyCh = applyCh
+	rf.readPersist(persister.ReadRaftState())
 
+	rf.applyCh = applyCh
 	rf.lastApplied = 0
 	rf.initNextIndex()
 	rf.initMatchIndex()
@@ -415,11 +424,12 @@ func (rf *Raft) convertToFollower(event toFollowerEvent) {
 	if rf.Role() == LEADER && rf.notLeaderCh != nil {
 		close(rf.notLeaderCh)
 	}
-	rf.currentTerm = event.term
 	rf.SetRole(FOLLOWER)
 	rf.electionTimeout = randomElectionTimeout()
 	rf.refreshTime = time.Now()
+	rf.currentTerm = event.term
 	rf.votedFor = -1
+	rf.persist()
 }
 
 func (rf *Raft) handleToCandidate() {
@@ -453,7 +463,6 @@ func (rf *Raft) handleToLeader() {
 				// impossible, then pass
 			case CANDIDATE:
 				rf.mu.Lock()
-				rf.DPrintf("to leader, %+v", betterLogs(rf.logs))
 				rf.SetRole(LEADER)
 				rf.notLeaderCh = make(chan struct{})
 				rf.mu.Unlock()

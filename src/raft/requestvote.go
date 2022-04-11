@@ -14,11 +14,14 @@ type RequestVoteArgs struct {
 }
 
 type RequestVoteReply struct {
+	TraceID     string
 	Term        int
 	VoteGranted bool
 }
 
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+	reply.TraceID = args.TraceID
+
 	if args.Term > rf.CurrentTerm() {
 		rf.convertToFollower(toFollowerEvent{
 			term:    args.Term,
@@ -44,6 +47,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateID {
 		rf.votedFor = args.CandidateID
+		rf.persist()
 		rf.electionTimeout = randomElectionTimeout()
 		rf.refreshTime = time.Now()
 		reply.Term = rf.currentTerm
@@ -74,6 +78,7 @@ func (rf *Raft) runElection() {
 	rf.SetRole(CANDIDATE)
 	rf.currentTerm++
 	rf.votedFor = rf.me
+	rf.persist()
 	lastLog := rf.logs[len(rf.logs)-1]
 	args := &RequestVoteArgs{
 		Term:         rf.currentTerm,

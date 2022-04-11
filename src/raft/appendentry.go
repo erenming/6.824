@@ -28,6 +28,11 @@ type AppendEntriesReply struct {
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	// Your code here (2A, 2B).
+	reply.XTerm = -1
+	reply.XIndex = -1
+	reply.XLen = -1
+	reply.TraceID = args.TraceID
+
 	if args.Term < rf.CurrentTerm() {
 		reply.Term = rf.CurrentTerm()
 		reply.Success = false
@@ -46,11 +51,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	defer rf.mu.Unlock()
 	rf.currentTerm = args.Term
 	rf.refreshTime = time.Now()
-
-	reply.XTerm = -1
-	reply.XIndex = -1
-	reply.XLen = -1
-	reply.TraceID = args.TraceID
 
 	lastLog := rf.logs[len(rf.logs)-1]
 	if args.PrevLogIndex > lastLog.Index {
@@ -92,6 +92,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// clean invalid log entries
 		rf.logs = rf.logs[:args.PrevLogIndex+1]
 		rf.logs = append(rf.logs, args.Entries...)
+		rf.persist()
 	}
 
 	if args.LeaderCommit > rf.commitIndex {
@@ -201,7 +202,7 @@ func (rf *Raft) broadcastAppendRPC(retry bool) {
 				} else if reply.XLen != -1 {
 					rf.nextIndex[server] = reply.XLen
 				} else {
-					rf.nextIndex[server]--
+					// rf.nextIndex[server]--
 				}
 
 				rf.matchIndex[server] = rf.nextIndex[server] - 1

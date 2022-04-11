@@ -571,6 +571,7 @@ loop:
 }
 
 func TestPersist12C(t *testing.T) {
+	t.SkipNow()
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -792,7 +793,7 @@ func TestUnreliableAgree2C(t *testing.T) {
 }
 
 func TestFigure8Unreliable2C(t *testing.T) {
-	t.SkipNow()
+	// t.SkipNow()
 	servers := 5
 	cfg := make_config(t, servers, true)
 	defer cfg.cleanup()
